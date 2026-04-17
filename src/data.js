@@ -427,39 +427,120 @@ Trick: compaction is NOT instant. You can read duplicate keys between compaction
   {
     id: 34, level: "senior", topic: "comparison",
     q: "When to choose Kafka, when RabbitMQ, when Celery? Decision matrix.",
-    a: `CHOOSE RABBITMQ:
-• Complex routing (topic/headers exchanges)
-• Task queues with priorities
-• Request/Reply, RPC patterns
-• Low latency (< 10ms)
-• Moderate throughput (up to ~50k msg/sec)
-• Need for DLQ, TTL, per-message guarantees
-• Traditional enterprise messaging
+    a: `THE ONE-LINE MENTAL MODEL:
+• RabbitMQ is for services having a CONVERSATION: "do this now, and ack when you're done".
+• Kafka is for services SHARING A MEMORY: "here's what happened; anyone who cares, read the log and catch up".
+• Celery is NOT a broker — it's a task-queue FRAMEWORK on top of a broker (RabbitMQ or Redis).
 
-CHOOSE KAFKA:
-• Event sourcing / event log
-• Stream processing
-• Very high throughput (millions msg/sec)
-• Need to replay events (new consumers read from beginning)
-• Multiple independent consumers of the same stream
-• Event-driven microservices (CDC, Outbox)
-• Logs/metrics aggregation
-• Long retention (days/weeks/months)
+THE CLEAN BOUNDARY (90% of interview cases):
+   Need to replay events or hold history for > 24h?    → Kafka
+   Everything else in event-driven + microservices?    → RabbitMQ is fine, often simpler
+   Python background jobs with retries + scheduling?   → Celery (backed by RabbitMQ or Redis)
 
-CHOOSE CELERY:
-• Python-only application
-• Background tasks (emails, reports, image processing)
-• Scheduled tasks (Celery Beat)
-• Simple workflows (chain, group, chord)
-• You need a ready-made retry/ack/monitoring framework, not "just a message bus"
+Anyone who says "you must use Kafka for event-driven architecture" is wrong. RabbitMQ pub-sub (topic/fanout exchanges) powered event-driven systems for a decade before Kafka was mainstream.
 
-HYBRID: Celery with a RabbitMQ broker for app-level tasks + Kafka for event bus between services. Very common in real systems.
+─────────────────────────────
+CHOOSE RABBITMQ WHEN you want:
 
-ANTI-PATTERNS:
-- Kafka as a task queue (no ack-per-message, rebalancing issues)
-- RabbitMQ as an event store (deletes on ack, small retention)
-- Celery for a high-throughput event stream`,
-    keywords: ["decision matrix", "use case", "hybrid", "anti-pattern"],
+1. COMPLEX ROUTING AT THE BROKER
+   Topic/headers exchanges route by pattern ("order.*.cancelled"), header value, or message type. The producer fires one message; the broker decides who gets what. Kafka does none of this — consumers must pre-subscribe to specific topics.
+
+2. TASK QUEUES (work distribution)
+   Multiple workers competing for items in the SAME queue. Each message goes to exactly one worker, acked when done, redelivered on crash. Per-message ack/retry/DLQ is native.
+
+3. PRIORITIES
+   A single queue can have priority levels so VIP events jump ahead. Kafka has no priority concept — order is strictly per-partition.
+
+4. REQUEST/REPLY (RPC over messaging)
+   Producer sends a request with a reply_to queue, awaits the response. Perfectly supported. Kafka can do it with correlation IDs + response topics but it's awkward.
+
+5. EVENT-DRIVEN MICROSERVICES without history
+   The classic "user signed up → 5 services react" fan-out. Each consumer gets its own durable queue bound to a topic exchange. No replay needed — yesterday's signup event doesn't matter to a new subscriber. This is RabbitMQ's sweet spot that people mistakenly send to Kafka.
+
+6. LOW LATENCY
+   Push model + AMQP = typically <10ms broker→consumer. Kafka is usually tens of ms because of poll/batch fetch semantics.
+
+7. MODERATE THROUGHPUT
+   Comfortable up to ~50k msg/sec per cluster. Push past that and you start fighting queue memory, connection churn, and flow control.
+
+8. PER-MESSAGE GUARANTEES
+   TTL per message, dead-lettering per queue, expiration, priorities, schedulers — all native on individual messages.
+
+─────────────────────────────
+CHOOSE KAFKA WHEN you need:
+
+1. REPLAY / TIME-TRAVEL
+   "Spin up a new billing consumer and process the last 30 days of orders."  This is THE question that forces Kafka. RabbitMQ deletes messages on ack; Kafka keeps them until retention expires. A new consumer group starts at offset 0 and catches up naturally.
+
+2. MULTIPLE INDEPENDENT READERS OF THE SAME LOG
+   Billing, analytics, fraud detection, notifications — all read the same OrderPlaced topic. Each consumer group tracks its own offset. In RabbitMQ you'd bind a separate queue per service; works, but you maintain N queues instead of 1 log.
+
+3. VERY HIGH THROUGHPUT
+   Append-only log + zero-copy (sendfile) + batched compression. Single cluster handles hundreds of thousands to millions of msg/sec on commodity hardware. RabbitMQ runs out of RAM well before that.
+
+4. LONG RETENTION
+   Days, weeks, months, forever (compacted topics). The DISK is the storage tier; retention is a config knob. RabbitMQ queues are meant to be drained, not to accumulate.
+
+5. STREAM PROCESSING / WINDOWED AGGREGATION
+   Kafka Streams, ksqlDB, Flink all expect a log-structured source. Sliding-window fraud detection, real-time metrics, CDC-driven materialized views — all assume Kafka semantics.
+
+6. EVENT SOURCING
+   When the log IS the source of truth. Aggregate state is rebuilt by replaying events from offset 0. RabbitMQ fundamentally cannot do this.
+
+7. CDC (CHANGE DATA CAPTURE) INTEGRATION
+   Debezium, Kafka Connect, Postgres → Kafka → 5 systems. The CDC ecosystem is Kafka-first; alternatives exist but are far less mature.
+
+8. SCHEMA GOVERNANCE AT SCALE
+   Schema Registry (Confluent / Apicurio) enforces compatibility across 100+ services producing to shared topics. RabbitMQ has no equivalent ecosystem.
+
+─────────────────────────────
+THE OVERLAP (WHERE PEOPLE GET IT WRONG):
+
+"We picked Kafka because we want event-driven architecture."
+→ If you mean "services emit events about state changes", RabbitMQ pub-sub is often simpler, cheaper, and easier to operate. Pick Kafka only if at least ONE of these is true:
+   - You need to replay events for new consumers or after a bug.
+   - You have > 10 consumer services reading the same stream.
+   - Throughput is > 50k events/sec sustained.
+   - You need long retention for audit or analytics.
+If none of those apply, RabbitMQ is the boring, correct choice.
+
+"We picked RabbitMQ to build an event store."
+→ Wrong tool. Queues delete on ack; there's no replay. If you need event sourcing, reach for Kafka (or EventStore, or a dedicated event-sourced DB).
+
+"We picked Kafka as a task queue for background jobs."
+→ Wrong tool. No per-message ack, no priorities, poor retries, partition rebalancing stalls consumers, no per-message TTL. Use RabbitMQ + Celery/Sidekiq/etc.
+
+─────────────────────────────
+CHOOSE CELERY WHEN:
+
+• Python stack + background jobs: send email, resize image, crunch report.
+• Scheduled tasks (Celery Beat = cron, but distributed).
+• You want retries, acks, task chaining (chord/chain/group), monitoring (Flower) — all out of the box. Celery is a FRAMEWORK; RabbitMQ and Kafka are PRIMITIVES.
+• Backed by RabbitMQ for reliability or Redis for speed + simplicity.
+
+When NOT to pick Celery:
+• Not Python (obvious — use Sidekiq for Ruby, BullMQ for Node, etc.).
+• High-throughput event bus between services — use the broker directly.
+• You only need a SCHEDULE primitive — a lightweight library + cron is lighter.
+
+─────────────────────────────
+COMMON HYBRIDS (real systems you'll see):
+
+• Celery + RabbitMQ + Kafka: Celery for Python workloads, RabbitMQ is Celery's broker AND also an event bus for team-internal events, Kafka is the company-wide event log (CDC, analytics, cross-team integrations).
+
+• SQS + Kafka: SQS for async task queues on AWS (serverless-friendly), Kafka for the analytics/streaming backbone (or MSK).
+
+• Redis Streams alone: small team, Redis already in stack. Works until you outgrow throughput or retention needs.
+
+─────────────────────────────
+WHAT INTERVIEWERS LISTEN FOR:
+
+1. You name TWO options and pick based on tradeoffs.
+2. You acknowledge what you're giving up (Kafka = ops complexity; RabbitMQ = no replay).
+3. You don't default to Kafka for everything — that's the senior red flag.
+4. You mention replay / retention as the decisive question for event-driven systems.
+5. You know that Celery isn't a broker — it's a task-queue framework.`,
+    keywords: ["decision matrix", "use case", "hybrid", "anti-pattern", "rabbitmq-vs-kafka", "event-driven"],
   },
   {
     id: 35, level: "senior", topic: "patterns",
