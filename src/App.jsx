@@ -1,9 +1,11 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   ChevronDown, ChevronRight, Check, X, Zap, AlertTriangle, Flame,
   Eye, EyeOff, RotateCcw, Filter, Target, Terminal, Download, Upload,
+  Search, Sun, Moon, User, Cookie,
 } from "lucide-react";
 import { LEVELS, TOPICS, QUESTIONS } from "./data.js";
+import { trackEvent, setAnalyticsConsent, setAnalyticsUser } from "./analytics.js";
 
 // ============== PERSISTENCE ==============
 const STORAGE_KEY = "interview-prep:v1";
@@ -63,6 +65,89 @@ export default function App() {
   const [lastSaved, setLastSaved] = useState(initial.lastSaved);
   const [saveFlash, setSaveFlash] = useState(false);
 
+  // ============== NEW FEATURES ==============
+  const [query, setQuery] = useState("");
+  const [username, setUsername] = useState("");
+  const [consent, setConsent] = useState(() =>
+    import.meta.env.VITE_GA_ID ? "pending" : "denied"
+  );
+  const [theme, setTheme] = useState(() => {
+    if (typeof document === "undefined") return "dark";
+    return document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  });
+  const searchRef = useRef(null);
+
+  // Load username + consent on mount
+  useEffect(() => {
+    try {
+      const n = localStorage.getItem("mb-username");
+      if (n) { setUsername(n); setAnalyticsUser(n); }
+      const c = localStorage.getItem("mb-ga-consent");
+      if (c === "granted" || c === "denied") {
+        setConsent(c);
+        setAnalyticsConsent(c);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Global "/" and Cmd/Ctrl+K shortcuts for search, Esc clears
+  useEffect(() => {
+    const onKey = (e) => {
+      const tag = e.target?.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || e.target?.isContentEditable;
+      const isModK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      const isSlash = e.key === "/" && !e.metaKey && !e.ctrlKey && !e.altKey;
+      if (isModK) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      } else if (isSlash && !typing) {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (e.key === "Escape" && document.activeElement === searchRef.current) {
+        if (searchRef.current?.value) setQuery(""); else searchRef.current?.blur();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Debounced search event (fires 800ms after last keystroke)
+  useEffect(() => {
+    if (!query.trim()) return;
+    const t = setTimeout(() => trackEvent("search", { search_term: query.trim() }), 800);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  const toggleTheme = () => {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    document.documentElement.setAttribute("data-theme", next);
+    try { localStorage.setItem("mb-theme", next); } catch { /* ignore */ }
+    trackEvent("theme_toggle", { theme: next });
+  };
+
+  const updateConsent = (value) => {
+    setConsent(value);
+    try { localStorage.setItem("mb-ga-consent", value); } catch { /* ignore */ }
+    setAnalyticsConsent(value);
+    trackEvent(value === "granted" ? "consent_granted" : "consent_denied");
+    if (value === "granted" && username) setAnalyticsUser(username);
+  };
+
+  const commitUsername = (value) => {
+    const clean = value.trim().slice(0, 64);
+    setUsername(clean);
+    try {
+      if (clean) localStorage.setItem("mb-username", clean);
+      else localStorage.removeItem("mb-username");
+    } catch { /* ignore */ }
+    setAnalyticsUser(clean);
+    if (clean) trackEvent("username_set");
+  };
+
   // Persist on any change (debounced via microtask)
   useEffect(() => {
     const ok = saveState({
@@ -86,13 +171,18 @@ export default function App() {
 
   // ============== DERIVED ==============
   const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase();
     return QUESTIONS.filter((q) => {
       if (levelFilter !== "all" && q.level !== levelFilter) return false;
       if (topicFilter !== "all" && q.topic !== topicFilter) return false;
       if (hideCompleted && completed.has(q.id)) return false;
+      if (needle) {
+        const hay = `${q.q} ${q.a} ${(q.keywords || []).join(" ")}`.toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
       return true;
     }).sort((a, b) => LEVELS[a.level].order - LEVELS[b.level].order || a.id - b.id);
-  }, [levelFilter, topicFilter, hideCompleted, completed]);
+  }, [levelFilter, topicFilter, hideCompleted, completed, query]);
 
   const stats = useMemo(() => {
     const total = QUESTIONS.length;
@@ -195,27 +285,50 @@ export default function App() {
     <div style={{ padding: "20px" }}>
       <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
         {/* HEADER */}
-        <header style={{ borderBottom: "1px solid #30363d", paddingBottom: "20px", marginBottom: "24px" }}>
+        <header style={{ borderBottom: "1px solid var(--border-default)", paddingBottom: "20px", marginBottom: "24px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", flexWrap: "wrap" }}>
-            <Terminal size={20} color="#58a6ff" />
-            <span style={{ color: "#7d8590", fontSize: "13px" }}>~/interview-prep/senior-backend $</span>
-            <span className="cursor" style={{ color: "#58a6ff" }}>▊</span>
+            <Terminal size={20} color="var(--accent-blue)" />
+            <span style={{ color: "var(--text-muted)", fontSize: "13px" }}>~/interview-prep/senior-backend $</span>
+            <span className="cursor" style={{ color: "var(--accent-blue)" }}>▊</span>
             <div style={{
               marginLeft: "auto",
-              fontSize: "11px",
-              color: saveFlash ? "#7dd3a0" : "#484f58",
-              transition: "color 0.3s",
               display: "flex",
               alignItems: "center",
-              gap: "6px",
+              gap: "10px",
             }}>
-              <span style={{
-                width: "6px", height: "6px",
-                borderRadius: "50%",
-                background: saveFlash ? "#7dd3a0" : "#484f58",
-                transition: "background 0.3s",
-              }} />
-              {lastSaved ? `saved · ${new Date(lastSaved).toLocaleTimeString()}` : "unsaved"}
+              <div style={{
+                fontSize: "11px",
+                color: saveFlash ? "var(--accent-green)" : "var(--text-faint)",
+                transition: "color 0.3s",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+              }}>
+                <span style={{
+                  width: "6px", height: "6px",
+                  borderRadius: "50%",
+                  background: saveFlash ? "var(--accent-green)" : "var(--text-faint)",
+                  transition: "background 0.3s",
+                }} />
+                {lastSaved ? `saved · ${new Date(lastSaved).toLocaleTimeString()}` : "unsaved"}
+              </div>
+              <button
+                onClick={toggleTheme}
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--border-default)",
+                  color: "var(--text-muted)",
+                  padding: "5px 7px",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+                aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+                title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              >
+                {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
+              </button>
             </div>
           </div>
           <h1 style={{
@@ -224,28 +337,28 @@ export default function App() {
             fontWeight: 700,
             margin: "0 0 8px 0",
             letterSpacing: "-0.02em",
-            background: "linear-gradient(135deg, #58a6ff 0%, #e84855 100%)",
+            background: "linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-red) 100%)",
             WebkitBackgroundClip: "text",
             WebkitTextFillColor: "transparent",
             backgroundClip: "text",
           }}>
             MESSAGE BROKERS // INTERVIEW DRILL
           </h1>
-          <div style={{ color: "#7d8590", fontSize: "14px", lineHeight: 1.6 }}>
+          <div style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: 1.6 }}>
             Celery · RabbitMQ · Kafka · Patterns — from trainee to lead-level, plus the tricky traps.
             <br />
-            <span style={{ color: "#e84855" }}>target:</span> senior backend ·{" "}
-            <span style={{ color: "#e84855" }}>progress:</span> auto-saved in your browser ·{" "}
-            <span style={{ color: "#7dd3a0" }}>good luck.</span>
+            <span style={{ color: "var(--accent-red)" }}>target:</span> senior backend ·{" "}
+            <span style={{ color: "var(--accent-red)" }}>progress:</span> auto-saved in your browser ·{" "}
+            <span style={{ color: "var(--accent-green)" }}>good luck.</span>
           </div>
         </header>
 
         {/* INTRO */}
         {showIntro && (
           <div style={{
-            background: "linear-gradient(135deg, #161b22 0%, #1c2128 100%)",
-            border: "1px solid #30363d",
-            borderLeft: "3px solid #58a6ff",
+            background: "linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-surface-2) 100%)",
+            border: "1px solid var(--border-default)",
+            borderLeft: "3px solid var(--accent-blue)",
             padding: "16px 20px",
             borderRadius: "6px",
             marginBottom: "20px",
@@ -256,18 +369,18 @@ export default function App() {
               onClick={() => setShowIntro(false)}
               style={{
                 position: "absolute", top: "12px", right: "12px",
-                background: "none", border: "none", color: "#7d8590",
+                background: "none", border: "none", color: "var(--text-muted)",
                 cursor: "pointer", padding: "4px",
               }}
               aria-label="Close intro"
             ><X size={16} /></button>
-            <div style={{ color: "#58a6ff", fontWeight: 600, marginBottom: "8px" }}>HOW TO USE THIS</div>
-            <div style={{ color: "#c9d1d9", lineHeight: 1.7 }}>
-              <strong style={{ color: "#7dd3a0" }}>1.</strong> Toggle <strong>BLIND MODE</strong> to hide answers — force yourself to think first.<br />
-              <strong style={{ color: "#7dd3a0" }}>2.</strong> After each question, rate your confidence (easy / medium / hard) — focus on <span style={{ color: "#e84855" }}>hard</span> on the last review pass.<br />
-              <strong style={{ color: "#7dd3a0" }}>3.</strong> Bookmark <span style={{ color: "#d4a574" }}>⚑</span> the ones you want to revisit 1 hour before the interview.<br />
-              <strong style={{ color: "#7dd3a0" }}>4.</strong> <span style={{ color: "#e84855" }}>Tricky</span> section is last — these are the gotchas seniors are actually tested on.<br />
-              <strong style={{ color: "#7dd3a0" }}>5.</strong> Your progress is saved automatically. Export it as JSON for backup / syncing across devices.
+            <div style={{ color: "var(--accent-blue)", fontWeight: 600, marginBottom: "8px" }}>HOW TO USE THIS</div>
+            <div style={{ color: "var(--text-secondary)", lineHeight: 1.7 }}>
+              <strong style={{ color: "var(--accent-green)" }}>1.</strong> Toggle <strong>BLIND MODE</strong> to hide answers — force yourself to think first.<br />
+              <strong style={{ color: "var(--accent-green)" }}>2.</strong> After each question, rate your confidence (easy / medium / hard) — focus on <span style={{ color: "var(--accent-red)" }}>hard</span> on the last review pass.<br />
+              <strong style={{ color: "var(--accent-green)" }}>3.</strong> Bookmark <span style={{ color: "var(--accent-amber)" }}>⚑</span> the ones you want to revisit 1 hour before the interview.<br />
+              <strong style={{ color: "var(--accent-green)" }}>4.</strong> <span style={{ color: "var(--accent-red)" }}>Tricky</span> section is last — these are the gotchas seniors are actually tested on.<br />
+              <strong style={{ color: "var(--accent-green)" }}>5.</strong> Your progress is saved automatically. Export it as JSON for backup / syncing across devices.
             </div>
           </div>
         )}
@@ -279,15 +392,15 @@ export default function App() {
           gap: "12px",
           marginBottom: "20px",
         }}>
-          <StatCard label="TOTAL PROGRESS" value={`${stats.done}/${stats.total}`} accent="#58a6ff" sub={`${progressPct}% complete`} />
-          <StatCard label="BOOKMARKED" value={bookmarked.size} accent="#d4a574" sub="for quick review" icon={<Flame size={14} />} />
-          <StatCard label="CONFIDENT" value={stats.confCount.easy || 0} accent="#7dd3a0" sub="got this cold" icon={<Check size={14} />} />
-          <StatCard label="NEEDS WORK" value={stats.confCount.hard || 0} accent="#e84855" sub="revisit!" icon={<AlertTriangle size={14} />} />
+          <StatCard label="TOTAL PROGRESS" value={`${stats.done}/${stats.total}`} accent="var(--accent-blue)" sub={`${progressPct}% complete`} />
+          <StatCard label="BOOKMARKED" value={bookmarked.size} accent="var(--accent-amber)" sub="for quick review" icon={<Flame size={14} />} />
+          <StatCard label="CONFIDENT" value={stats.confCount.easy || 0} accent="var(--accent-green)" sub="got this cold" icon={<Check size={14} />} />
+          <StatCard label="NEEDS WORK" value={stats.confCount.hard || 0} accent="var(--accent-red)" sub="revisit!" icon={<AlertTriangle size={14} />} />
         </div>
 
         {/* PROGRESS BY LEVEL */}
         <div style={{ marginBottom: "20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "#7d8590", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: "var(--text-muted)", marginBottom: "6px", textTransform: "uppercase", letterSpacing: "0.1em" }}>
             <span>by level</span>
             <span>done / total</span>
           </div>
@@ -298,24 +411,88 @@ export default function App() {
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "12px" }}>
                   <div style={{ width: "70px", color: lvl.color, fontWeight: 600, letterSpacing: "0.05em" }}>{lvl.label}</div>
-                  <div style={{ flex: 1, height: "8px", background: "#161b22", borderRadius: "4px", overflow: "hidden", border: "1px solid #30363d" }}>
+                  <div style={{ flex: 1, height: "8px", background: "var(--bg-surface)", borderRadius: "4px", overflow: "hidden", border: "1px solid var(--border-default)" }}>
                     <div style={{
                       width: `${pct}%`, height: "100%",
                       background: `linear-gradient(90deg, ${lvl.color}aa, ${lvl.color})`,
                       transition: "width 0.3s",
                     }} />
                   </div>
-                  <div style={{ width: "50px", textAlign: "right", color: "#c9d1d9", fontVariantNumeric: "tabular-nums" }}>{s.done}/{s.total}</div>
+                  <div style={{ width: "50px", textAlign: "right", color: "var(--text-secondary)", fontVariantNumeric: "tabular-nums" }}>{s.done}/{s.total}</div>
                 </div>
               );
             })}
           </div>
         </div>
 
+        {/* SEARCH */}
+        <div style={{ marginBottom: "12px", position: "relative" }}>
+          <Search
+            size={14}
+            style={{
+              position: "absolute", left: "12px", top: "50%",
+              transform: "translateY(-50%)", color: "var(--text-muted)",
+            }}
+          />
+          <input
+            ref={searchRef}
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search questions, answers, keywords…"
+            aria-label="Search"
+            style={{
+              width: "100%",
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-default)",
+              borderRadius: "6px",
+              padding: "10px 12px 10px 34px",
+              color: "var(--text-primary)",
+              fontFamily: "inherit",
+              fontSize: "13px",
+            }}
+          />
+          <div style={{
+            position: "absolute", right: "10px", top: "50%",
+            transform: "translateY(-50%)", display: "flex", gap: "6px",
+            alignItems: "center",
+          }}>
+            {query ? (
+              <>
+                <span style={{
+                  fontSize: "11px", color: "var(--accent-blue)",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
+                  {filtered.length} {filtered.length === 1 ? "match" : "matches"}
+                </span>
+                <button
+                  onClick={() => { setQuery(""); searchRef.current?.focus(); }}
+                  style={{
+                    background: "none", border: "none", cursor: "pointer",
+                    color: "var(--text-muted)", padding: "2px", display: "flex",
+                  }}
+                  aria-label="Clear search"
+                  title="Clear"
+                >
+                  <X size={14} />
+                </button>
+              </>
+            ) : (
+              <span style={{
+                fontSize: "10px", color: "var(--text-faint)",
+                border: "1px solid var(--border-default)", borderRadius: "3px",
+                padding: "1px 5px", letterSpacing: "0.05em",
+              }}>
+                /
+              </span>
+            )}
+          </div>
+        </div>
+
         {/* CONTROLS */}
         <div style={{
-          background: "#161b22",
-          border: "1px solid #30363d",
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border-default)",
           borderRadius: "6px",
           padding: "12px 16px",
           marginBottom: "20px",
@@ -324,7 +501,7 @@ export default function App() {
           gap: "12px",
           alignItems: "center",
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "#7d8590", fontSize: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "6px", color: "var(--text-muted)", fontSize: "12px" }}>
             <Filter size={14} />
             <span style={{ textTransform: "uppercase", letterSpacing: "0.1em" }}>filter</span>
           </div>
@@ -344,10 +521,29 @@ export default function App() {
             hide done
           </label>
 
-          <label style={{ ...toggleLabelStyle, color: blindMode ? "#e84855" : "#7d8590" }}>
+          <label style={{ ...toggleLabelStyle, color: blindMode ? "var(--accent-red)" : "var(--text-muted)" }}>
             <input type="checkbox" checked={blindMode} onChange={(e) => setBlindMode(e.target.checked)} />
             {blindMode ? <EyeOff size={14} /> : <Eye size={14} />} blind mode
           </label>
+
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <User size={12} style={{ position: "absolute", left: "8px", color: "var(--text-muted)" }} />
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              onBlur={(e) => commitUsername(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              maxLength={64}
+              placeholder="your name (optional)"
+              aria-label="Your name"
+              style={{
+                ...selectStyle,
+                paddingLeft: "24px",
+                width: "170px",
+              }}
+            />
+          </div>
 
           <div style={{ marginLeft: "auto", display: "flex", gap: "8px", flexWrap: "wrap" }}>
             <button onClick={exportProgress} style={btnStyle} title="Export progress as JSON">
@@ -357,7 +553,7 @@ export default function App() {
               <Upload size={12} /> import
               <input type="file" accept="application/json" onChange={importProgress} style={{ display: "none" }} />
             </label>
-            <button onClick={resetAll} style={{ ...btnStyle, color: "#e84855", borderColor: "#e8485544" }}>
+            <button onClick={resetAll} style={{ ...btnStyle, color: "var(--accent-red)", borderColor: "color-mix(in srgb, var(--accent-red) 27%, transparent)" }}>
               <RotateCcw size={12} /> reset
             </button>
           </div>
@@ -369,9 +565,9 @@ export default function App() {
             <div style={{
               padding: "60px 20px",
               textAlign: "center",
-              color: "#7d8590",
-              background: "#161b22",
-              border: "1px dashed #30363d",
+              color: "var(--text-muted)",
+              background: "var(--bg-surface)",
+              border: "1px dashed var(--border-default)",
               borderRadius: "6px",
             }}>
               <div style={{ fontSize: "32px", marginBottom: "8px" }}>∅</div>
@@ -403,40 +599,136 @@ export default function App() {
         <div style={{
           marginTop: "32px",
           padding: "20px",
-          background: "linear-gradient(135deg, #161b22 0%, #1c2128 100%)",
-          border: "1px solid #30363d",
-          borderLeft: "3px solid #e84855",
+          background: "linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-surface-2) 100%)",
+          border: "1px solid var(--border-default)",
+          borderLeft: "3px solid var(--accent-red)",
           borderRadius: "6px",
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
-            <Target size={16} color="#e84855" />
-            <span style={{ color: "#e84855", fontWeight: 700, letterSpacing: "0.1em", fontSize: "13px" }}>
+            <Target size={16} color="var(--accent-red)" />
+            <span style={{ color: "var(--accent-red)", fontWeight: 700, letterSpacing: "0.1em", fontSize: "13px" }}>
               FINAL PRE-INTERVIEW CHECKLIST
             </span>
           </div>
-          <ul style={{ color: "#c9d1d9", fontSize: "13px", lineHeight: 1.8, margin: 0, paddingLeft: "20px" }}>
+          <ul style={{ color: "var(--text-secondary)", fontSize: "13px", lineHeight: 1.8, margin: 0, paddingLeft: "20px" }}>
             <li>Be ready to draw the architecture on a whiteboard — producer, broker, consumer, DLQ, retry flow.</li>
-            <li>For any answer, end with <strong style={{ color: "#7dd3a0" }}>trade-offs</strong>. "It depends" is fine if you explain what it depends on.</li>
+            <li>For any answer, end with <strong style={{ color: "var(--accent-green)" }}>trade-offs</strong>. "It depends" is fine if you explain what it depends on.</li>
             <li>Prepare 1–2 stories from your own experience: an incident, a tough debug session, a design decision.</li>
             <li>If you don't know — say "I don't know, but I'd start by…" and reason out loud. Interviewers love that.</li>
             <li>Questions for them: how do you handle poison messages? what's your DLQ policy? what's your biggest event-driven pain point?</li>
-            <li style={{ color: "#e84855" }}>Sleep. Don't cram for 12 hours. 7h of sleep &gt; 2 more questions memorized.</li>
+            <li style={{ color: "var(--accent-red)" }}>Sleep. Don't cram for 12 hours. 7h of sleep &gt; 2 more questions memorized.</li>
           </ul>
         </div>
 
         <footer style={{
           marginTop: "24px",
           padding: "16px 0",
-          borderTop: "1px solid #21262d",
-          color: "#484f58",
+          borderTop: "1px solid var(--border-subtle)",
+          color: "var(--text-faint)",
           fontSize: "11px",
           textAlign: "center",
         }}>
           {QUESTIONS.length} questions · {Object.keys(LEVELS).length} levels · {Object.keys(TOPICS).length} topics
           <br />
-          <span className="cursor">▊</span> break a leg on Monday.
+          <span className="cursor">▊</span> Created by{" "}
+          <span style={{ color: "var(--text-secondary)" }}>Andrei</span> ·{" "}
+          <a
+            href="https://t.me/Suslicke"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--accent-blue)", textDecoration: "none" }}
+          >
+            @Suslicke
+          </a>
         </footer>
       </div>
+
+      {/* ============== CONSENT BANNER ============== */}
+      {consent === "pending" && (
+        <div
+          role="dialog"
+          aria-label="Cookie consent"
+          aria-live="polite"
+          style={{
+            position: "fixed",
+            bottom: "16px",
+            left: "16px",
+            right: "16px",
+            maxWidth: "560px",
+            margin: "0 auto",
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border-default)",
+            borderLeft: "3px solid var(--accent-blue)",
+            borderRadius: "6px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
+            padding: "14px 16px",
+            zIndex: 50,
+            display: "flex",
+            gap: "12px",
+            alignItems: "flex-start",
+          }}
+        >
+          <div style={{
+            flexShrink: 0,
+            width: "32px",
+            height: "32px",
+            borderRadius: "4px",
+            background: "color-mix(in srgb, var(--accent-blue) 12%, transparent)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--accent-blue)",
+          }}>
+            <Cookie size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)", marginBottom: "4px" }}>
+              We use cookies
+            </div>
+            <div style={{ fontSize: "12px", color: "var(--text-muted)", lineHeight: 1.6, marginBottom: "10px" }}>
+              Google Analytics tracks how this guide is used — searches, progress, and general device info. If you set a name, it's attached so you can see your own stats. No ads. You can change your mind later.
+            </div>
+            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+              <button
+                onClick={() => updateConsent("granted")}
+                style={{
+                  background: "var(--accent-blue)",
+                  color: "var(--bg-app)",
+                  border: "1px solid var(--accent-blue)",
+                  padding: "5px 12px",
+                  borderRadius: "3px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Accept
+              </button>
+              <button
+                onClick={() => updateConsent("denied")}
+                style={{
+                  background: "transparent",
+                  color: "var(--text-muted)",
+                  border: "1px solid var(--border-default)",
+                  padding: "5px 12px",
+                  borderRadius: "3px",
+                  cursor: "pointer",
+                  fontFamily: "inherit",
+                  fontSize: "11px",
+                  fontWeight: 500,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -453,8 +745,8 @@ function QuestionCard({
     <div
       className="card-enter"
       style={{
-        background: "#161b22",
-        border: `1px solid ${isExpanded ? lvl.color + "66" : "#30363d"}`,
+        background: "var(--bg-surface)",
+        border: `1px solid ${isExpanded ? lvl.color + "66" : "var(--border-default)"}`,
         borderLeft: `3px solid ${lvl.color}`,
         borderRadius: "6px",
         overflow: "hidden",
@@ -473,7 +765,7 @@ function QuestionCard({
           userSelect: "none",
         }}
       >
-        <div style={{ color: "#7d8590", fontSize: "11px", paddingTop: "3px", fontVariantNumeric: "tabular-nums", minWidth: "32px" }}>
+        <div style={{ color: "var(--text-muted)", fontSize: "11px", paddingTop: "3px", fontVariantNumeric: "tabular-nums", minWidth: "32px" }}>
           #{String(idx + 1).padStart(3, "0")}
         </div>
 
@@ -481,7 +773,7 @@ function QuestionCard({
           onClick={(e) => { e.stopPropagation(); onToggleComplete(); }}
           style={{
             background: isDone ? lvl.color : "transparent",
-            border: `1.5px solid ${isDone ? lvl.color : "#484f58"}`,
+            border: `1.5px solid ${isDone ? lvl.color : "var(--text-faint)"}`,
             borderRadius: "3px",
             width: "18px", height: "18px",
             cursor: "pointer",
@@ -492,7 +784,7 @@ function QuestionCard({
           }}
           aria-label={isDone ? "Mark as not done" : "Mark as done"}
         >
-          {isDone && <Check size={12} color="#0d1117" strokeWidth={3} />}
+          {isDone && <Check size={12} color="var(--bg-app)" strokeWidth={3} />}
         </button>
 
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -505,23 +797,23 @@ function QuestionCard({
               background: `${lvl.color}15`,
             }}>{lvl.label}</span>
             <span style={{
-              fontSize: "10px", color: "#7d8590",
+              fontSize: "10px", color: "var(--text-muted)",
               padding: "2px 6px",
-              border: "1px solid #30363d",
+              border: "1px solid var(--border-default)",
               borderRadius: "3px",
             }}>{TOPICS[q.topic]}</span>
             {q.level === "tricky" && (
-              <span style={{ fontSize: "10px", color: "#e84855", display: "flex", alignItems: "center", gap: "3px" }}>
+              <span style={{ fontSize: "10px", color: "var(--accent-red)", display: "flex", alignItems: "center", gap: "3px" }}>
                 <Zap size={10} /> gotcha
               </span>
             )}
             {conf && (
               <span style={{
                 fontSize: "10px",
-                color: conf === "easy" ? "#7dd3a0" : conf === "medium" ? "#d4a574" : "#e84855",
+                color: conf === "easy" ? "var(--accent-green)" : conf === "medium" ? "var(--accent-amber)" : "var(--accent-red)",
                 padding: "2px 6px",
                 borderRadius: "3px",
-                background: "#0d1117",
+                background: "var(--bg-app)",
               }}>{conf}</span>
             )}
           </div>
@@ -529,10 +821,10 @@ function QuestionCard({
             fontFamily: "'Space Grotesk', sans-serif",
             fontSize: "15px",
             fontWeight: 500,
-            color: "#e6edf3",
+            color: "var(--text-primary)",
             lineHeight: 1.45,
             textDecoration: isDone ? "line-through" : "none",
-            textDecorationColor: "#484f58",
+            textDecorationColor: "var(--text-faint)",
           }}>
             {q.q}
           </div>
@@ -542,7 +834,7 @@ function QuestionCard({
           onClick={(e) => { e.stopPropagation(); onToggleBookmark(); }}
           style={{
             background: "none", border: "none",
-            color: isBookmarked ? "#d4a574" : "#484f58",
+            color: isBookmarked ? "var(--accent-amber)" : "var(--text-faint)",
             cursor: "pointer", padding: "2px",
             fontSize: "18px",
             lineHeight: 1,
@@ -553,16 +845,16 @@ function QuestionCard({
           ⚑
         </button>
 
-        <div style={{ color: "#7d8590", paddingTop: "4px" }}>
+        <div style={{ color: "var(--text-muted)", paddingTop: "4px" }}>
           {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </div>
       </div>
 
       {isExpanded && (
-        <div style={{ padding: "0 16px 16px 62px", borderTop: "1px solid #21262d" }}>
+        <div style={{ padding: "0 16px 16px 62px", borderTop: "1px solid var(--border-subtle)" }}>
           {!showAnswer ? (
             <div style={{ padding: "24px 0", textAlign: "center" }}>
-              <div style={{ color: "#7d8590", fontSize: "13px", marginBottom: "12px" }}>
+              <div style={{ color: "var(--text-muted)", fontSize: "13px", marginBottom: "12px" }}>
                 💭 Think about your answer first, then reveal.
               </div>
               <button
@@ -590,7 +882,7 @@ function QuestionCard({
                 whiteSpace: "pre-wrap",
                 fontSize: "13.5px",
                 lineHeight: 1.75,
-                color: "#c9d1d9",
+                color: "var(--text-secondary)",
                 padding: "12px 0",
               }}>
                 {q.a}
@@ -600,15 +892,15 @@ function QuestionCard({
                 <div style={{
                   display: "flex", flexWrap: "wrap", gap: "6px",
                   marginTop: "10px", paddingTop: "10px",
-                  borderTop: "1px dashed #30363d",
+                  borderTop: "1px dashed var(--border-default)",
                 }}>
                   {q.keywords.map((kw) => (
                     <span key={kw} style={{
                       fontSize: "10px",
-                      color: "#58a6ff",
+                      color: "var(--accent-blue)",
                       padding: "2px 8px",
-                      background: "#0d1117",
-                      border: "1px solid #1f6feb33",
+                      background: "var(--bg-app)",
+                      border: "1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)",
                       borderRadius: "10px",
                     }}>#{kw}</span>
                   ))}
@@ -618,17 +910,17 @@ function QuestionCard({
               <div style={{
                 marginTop: "14px",
                 paddingTop: "14px",
-                borderTop: "1px solid #21262d",
+                borderTop: "1px solid var(--border-subtle)",
                 display: "flex",
                 alignItems: "center",
                 gap: "10px",
                 flexWrap: "wrap",
               }}>
-                <span style={{ fontSize: "11px", color: "#7d8590", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                <span style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
                   how did it go?
                 </span>
                 {["easy", "medium", "hard"].map((c) => {
-                  const cColor = c === "easy" ? "#7dd3a0" : c === "medium" ? "#d4a574" : "#e84855";
+                  const cColor = c === "easy" ? "var(--accent-green)" : c === "medium" ? "var(--accent-amber)" : "var(--accent-red)";
                   const active = conf === c;
                   return (
                     <button
@@ -636,8 +928,8 @@ function QuestionCard({
                       onClick={() => onSetConf(c)}
                       style={{
                         background: active ? cColor + "20" : "transparent",
-                        border: `1px solid ${active ? cColor : "#30363d"}`,
-                        color: active ? cColor : "#7d8590",
+                        border: `1px solid ${active ? cColor : "var(--border-default)"}`,
+                        color: active ? cColor : "var(--text-muted)",
                         padding: "4px 12px",
                         borderRadius: "3px",
                         cursor: "pointer",
@@ -659,7 +951,7 @@ function QuestionCard({
                       marginLeft: "auto",
                       background: "transparent",
                       border: "none",
-                      color: "#7d8590",
+                      color: "var(--text-muted)",
                       cursor: "pointer",
                       fontFamily: "inherit",
                       fontSize: "11px",
@@ -682,9 +974,9 @@ function QuestionCard({
 
 // ============== HELPERS ==============
 const selectStyle = {
-  background: "#0d1117",
-  color: "#c9d1d9",
-  border: "1px solid #30363d",
+  background: "var(--bg-app)",
+  color: "var(--text-secondary)",
+  border: "1px solid var(--border-default)",
   borderRadius: "4px",
   padding: "5px 8px",
   fontFamily: "inherit",
@@ -696,7 +988,7 @@ const toggleLabelStyle = {
   display: "flex",
   alignItems: "center",
   gap: "6px",
-  color: "#7d8590",
+  color: "var(--text-muted)",
   fontSize: "12px",
   cursor: "pointer",
   userSelect: "none",
@@ -704,8 +996,8 @@ const toggleLabelStyle = {
 
 const btnStyle = {
   background: "transparent",
-  border: "1px solid #30363d",
-  color: "#7d8590",
+  border: "1px solid var(--border-default)",
+  color: "var(--text-muted)",
   padding: "5px 10px",
   borderRadius: "4px",
   cursor: "pointer",
@@ -719,15 +1011,15 @@ const btnStyle = {
 function StatCard({ label, value, accent, sub, icon }) {
   return (
     <div style={{
-      background: "#161b22",
-      border: "1px solid #30363d",
+      background: "var(--bg-surface)",
+      border: "1px solid var(--border-default)",
       borderTop: `2px solid ${accent}`,
       borderRadius: "4px",
       padding: "12px 14px",
     }}>
       <div style={{
         fontSize: "10px",
-        color: "#7d8590",
+        color: "var(--text-muted)",
         textTransform: "uppercase",
         letterSpacing: "0.1em",
         marginBottom: "6px",
@@ -747,7 +1039,7 @@ function StatCard({ label, value, accent, sub, icon }) {
       }}>
         {value}
       </div>
-      {sub && <div style={{ fontSize: "11px", color: "#7d8590", marginTop: "4px" }}>{sub}</div>}
+      {sub && <div style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>{sub}</div>}
     </div>
   );
 }

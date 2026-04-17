@@ -1938,4 +1938,420 @@ ANTI-PATTERNS I AVOID:
 • SNS without SQS (no buffering, no retry for offline consumers)`,
     keywords: ["decision matrix", "managed", "throughput", "ordering", "ecosystem"],
   },
+
+  // ============== NEW: DECISION MATRIX + HIGH-VALUE INTERVIEW QUESTIONS ==============
+  {
+    id: 100, level: "senior", topic: "comparison",
+    q: "Broker decision matrix — pick one in 60 seconds",
+    a: `A cheat sheet you can visualize on a whiteboard.
+
+ REQUIREMENT              | RabbitMQ | Kafka | Celery | Redis Str. | NATS JS | SQS
+---------------------------|----------|-------|--------|------------|---------|------
+ <10k msg/s throughput    |   ✓      |  ✓    |  ✓     |    ✓       |   ✓     |  ✓
+ 100k+ msg/s throughput   |   ⚠      |  ✓✓   |  ⚠     |    ⚠       |   ✓     |  ⚠
+ Ordered per key (partit) |   ⚠      |  ✓    |  ✗     |    ✓       |   ✓     |  ✓*
+ Replay messages (hours)  |   ✗      |  ✓✓   |  ✗     |    ✓       |   ✓     |  ✗
+ Complex routing rules    |   ✓✓     |  ✗    |  ✗     |    ✗       |   ✓     |  ⚠
+ Dead-letter queue native |   ✓✓     |  ⚠    |  ✓     |    ✗       |   ✓     |  ✓✓
+ Exactly-once (prod→cons) |   ✗      |  ✓*   |  ✗     |    ✗       |   ✓*    |  ⚠
+ Low latency (<1ms)       |   ⚠      |  ⚠    |  ✗     |    ✓✓      |   ✓✓    |  ✗
+ Managed service (no ops) |   AWS MQ |  MSK  |  -     |    ElastiC |   Synad.| AWS✓
+ Pub-sub fan-out          |   ✓✓     |  ✓    |  ✗     |    ✓       |   ✓✓    |  SNS
+ Pure python stack        |   ✓ pika |  ⚠    |  ✓✓    |    ✓       |   ✓     |  ✓
+
+✓✓ = strong fit, ✓ = works, ⚠ = possible but not its strength, ✗ = don't use
+* = requires careful configuration (idempotent producers, dedupe keys, etc.)
+
+DECISION TREE:
+1. Need to REPLAY events from yesterday? → Kafka or Redis Streams or NATS JetStream.
+2. Need complex routing (topic exchange, headers)? → RabbitMQ.
+3. Background Python jobs with retries? → Celery (+ Redis or RabbitMQ broker).
+4. Already on AWS, serverless, "just works"? → SQS (FIFO if ordering needed).
+5. Microservices with ultra-low latency? → NATS Core (fire-and-forget) or JetStream (durable).
+6. Schema governance + long retention + analytics? → Kafka with Schema Registry.
+7. Small team, Redis already in stack? → Redis Streams (until throughput outgrows it).
+
+WHAT INTERVIEWERS LISTEN FOR:
+→ You mention at least TWO options and pick based on trade-offs.
+→ You acknowledge what you're giving up (Kafka = ops complexity; SQS = retention limits).
+→ You don't pick Kafka for everything. That's the red flag answer.`,
+    keywords: ["decision matrix", "comparison", "trade-offs", "interview"],
+  },
+  {
+    id: 101, level: "middle", topic: "patterns",
+    q: "Exactly-once delivery — truth, myth, and what actually works",
+    a: `THE MYTH: "We need exactly-once delivery, so we must use Kafka with idempotent producers."
+
+THE TRUTH: Exactly-once is ALMOST NEVER end-to-end possible. What you CAN get:
+
+1. EXACTLY-ONCE WITHIN A BROKER (producer → broker → storage)
+   • Kafka: idempotent producer + transactions → messages persisted at-most-once
+   • NATS JetStream: msg-id deduplication window
+
+2. AT-LEAST-ONCE FROM BROKER TO CONSUMER
+   • The broker redelivers if consumer doesn't ack.
+   • Consumer WILL sometimes see duplicates. Period.
+
+3. EFFECTIVELY-EXACTLY-ONCE END-TO-END = AT-LEAST-ONCE + IDEMPOTENT CONSUMER
+   • Consumer stores a dedupe key (msg_id) in a DB before processing.
+   • If the same msg_id shows up again, it's a no-op.
+   • This is THE production pattern.
+
+INTERVIEW-READY ANSWER:
+"Exactly-once end-to-end doesn't exist in a distributed system with failures. I aim for at-least-once delivery plus idempotent consumers. The consumer stores a seen-message-id in its own DB in the same transaction that commits the side effect — two-phase commit between the broker ack and the DB would be the only "true" exactly-once, but that's operationally expensive and basically no one does it in practice."
+
+WHAT HAPPENS IF YOU SKIP IDEMPOTENCY:
+• Consumer crashes after work but before ack → message redelivered → side effect happens twice.
+• Example: charge_card called twice → customer double-charged → incident.`,
+    keywords: ["exactly-once", "idempotent", "at-least-once", "dedupe"],
+  },
+  {
+    id: 102, level: "senior", topic: "patterns",
+    q: "Poison messages — how to handle them without taking down the queue",
+    a: `A POISON MESSAGE is one the consumer can never process successfully (malformed payload, missing foreign key, bug in parsing). Without handling, it blocks the queue and keeps getting retried forever.
+
+THE PATTERN: retry N times, then dead-letter.
+
+1. TRACK RETRY COUNT
+   • Add a delivery attempts counter either in the message headers (x-delivery-count in AMQP 1.0, RabbitMQ x-delivery-count) or in an external store (Redis with msg_id → counter).
+
+2. BOUNDED RETRIES WITH EXPONENTIAL BACKOFF
+   • 1st retry after 10s, 2nd after 1min, 3rd after 10min. Gives upstream time to recover.
+   • In RabbitMQ: use TTL + dead-letter-exchange to implement delayed retries.
+   • In Kafka: there's no native backoff — either process in a separate retry topic or use the official Retry Topic pattern (ProducerRecord to ".retry" with a scheduled delivery time).
+
+3. DEAD-LETTER QUEUE (DLQ) AFTER MAX RETRIES
+   • Move the message to a separate queue/topic for human inspection.
+   • RabbitMQ: x-dead-letter-exchange on the queue. SQS: RedrivePolicy with maxReceiveCount.
+   • Include reason (exception message, stack trace header) so ops can triage.
+
+4. ALERT ON DLQ DEPTH
+   • Prometheus/Datadog on DLQ message count. Non-zero = someone should look.
+
+5. WHAT YOU DON'T DO:
+   • Catch everything and ack silently → silent data loss.
+   • Log and skip → messages are gone forever; can't reprocess after fixing the bug.
+   • Retry forever with no backoff → overwhelms the upstream and burns CPU.
+
+COMMON FOLLOW-UP: "What do you do with the DLQ?"
+• Build a small tool to replay messages from DLQ back to the main queue after a fix deploys.
+• Never delete messages from DLQ without human review — they might be evidence of a bug.`,
+    keywords: ["poison message", "DLQ", "dead-letter", "retry", "backoff"],
+  },
+  {
+    id: 103, level: "middle", topic: "patterns",
+    q: "Idempotency keys — why every async consumer needs them",
+    a: `CLAIM: if a consumer runs and doesn't have an idempotency key, it's buggy by design.
+
+WHY: at-least-once delivery is the guarantee nearly all brokers actually provide. Consumer crashes, network blips, and retries WILL cause duplicates. Without idempotency, duplicate delivery = duplicate side effects.
+
+CANONICAL PATTERN — "dedupe inside the transaction":
+
+  def process(msg):
+      key = msg.headers["idempotency_key"]  # or msg.id, or a hash of the payload
+
+      with db.transaction():
+          if db.seen.exists(key):
+              return                          # already processed, ack & move on
+          db.seen.insert(key)                 # in the SAME transaction
+          do_side_effect(msg)                 # only if we won the race
+
+      broker.ack(msg)
+
+KEY POINTS:
+• "seen" table in the SAME database as the business data → one transaction commits both the dedupe record AND the side effect.
+• If the transaction fails, nothing commits, the message is redelivered, and we try again.
+• The broker ack happens AFTER the transaction commits. If we ack before → we might crash mid-work and lose the message.
+
+WHAT TO USE AS THE KEY:
+1. A producer-supplied UUID in a header → cleanest (producer owns semantics).
+2. A hash of business fields (user_id + order_id + timestamp-bucket) → works when producers can't attach a key.
+3. Message offset + partition (Kafka) or delivery_tag (AMQP) → works for the single-broker case but breaks if you replay.
+
+TTL: the "seen" table will grow forever. Strategies:
+• Keep keys for 7-30 days (longer than your retry window) then drop.
+• Use a partitioned table and drop old partitions.
+• For high volume, use Redis with TTL (risk: eviction before broker stops retrying).`,
+    keywords: ["idempotency", "dedupe", "key", "at-least-once", "transaction"],
+  },
+  {
+    id: 104, level: "senior", topic: "patterns",
+    q: "Saga pattern — managing distributed transactions without 2PC",
+    a: `THE PROBLEM: an operation spans multiple services (pay → reserve-inventory → ship). You can't wrap them in a single ACID transaction because each service has its own DB. Two-phase commit (2PC) works in theory but is operationally brittle and almost nobody uses it in 2026.
+
+SAGA: break the transaction into local transactions + compensating actions.
+
+TWO STYLES:
+
+1. CHOREOGRAPHY (event-driven, decentralized)
+   OrderService → OrderCreated → (bus)
+   PaymentService listens → charges card → PaymentCompleted
+   InventoryService listens → reserves items → InventoryReserved
+   ShippingService listens → creates label → Shipped
+
+   On failure: service emits compensating event (PaymentFailed → InventoryService releases reservation → OrderService marks as cancelled).
+
+   Pros: loose coupling, no orchestrator.
+   Cons: hard to see the "whole flow" anywhere; debugging traces span many services.
+
+2. ORCHESTRATION (central saga orchestrator)
+   A dedicated Saga service holds the state machine.
+   It calls each service in sequence, listens for results, issues compensations on failure.
+
+   Pros: entire flow visible in one place; easier to evolve.
+   Cons: orchestrator becomes a critical dependency.
+
+WHEN IT'S NOT A SAGA:
+• You don't need compensation — just retries.
+• The operation is a single local transaction — no saga needed.
+• You need strict consistency → you need a database that supports distributed transactions, not a saga.
+
+COMMON MISTAKES:
+1. Forgetting compensations are not always undo — sending "sorry your order failed" email is fine, but "un-charge" requires a refund, not pretending the charge never happened.
+2. Assuming compensations always succeed. They can fail too. Plan for "compensation of the compensation" or manual intervention.
+3. Not making steps idempotent. Retries will happen. See id 103.`,
+    keywords: ["saga", "2PC", "compensation", "orchestration", "choreography"],
+  },
+  {
+    id: 105, level: "senior", topic: "kafka",
+    q: "Partition key design — the decision that makes or breaks your Kafka cluster",
+    a: `Kafka partitions give you two things you can't have together cheaply: parallelism (many partitions = many consumers in a group) AND ordering (messages with the same key always go to the same partition = ordered within that key).
+
+THE RULE: pick a partition key whose value space is BIG ENOUGH to spread load evenly, but SMALL ENOUGH that all events for one "entity" end up on the same partition.
+
+GOOD KEYS:
+• user_id → orders and events for the same user stay ordered
+• tenant_id + user_id → per-tenant parallelism
+• device_id for IoT streams
+• session_id for user activity within a session
+
+BAD KEYS:
+• null (round-robin) → you lose all ordering
+• timestamp → hot spot (all recent events on one partition)
+• a low-cardinality field (country → 200 keys) → skewed partitions, some workers idle
+• a very high-cardinality field you never query by → wastes the ordering guarantee
+
+HOT PARTITION (the classic production incident):
+A few keys receive 100x more traffic than average. One partition fills up while others are idle. Consumer lag on that partition alone turns into a queue backlog.
+
+MITIGATIONS:
+1. Salt the key: user_id + "-" + random_bucket(0..N). Trades ordering for load spread — but across a user's events you're not ordered anymore.
+2. Separate topic for the hot keys with more partitions.
+3. Detect hot partitions (Kafka metrics, cmak, Burrow) and alert early.
+
+CHANGING PARTITION COUNT IS A LANDMINE:
+Adding partitions changes the hash(key) % partition_count mapping — all historical ordering by key is broken for future messages. Only do this with a controlled migration (dual-publish during cutover, or start a new topic and migrate consumers).`,
+    keywords: ["partition", "kafka", "key", "hot partition", "ordering"],
+  },
+  {
+    id: 106, level: "senior", topic: "rabbitmq",
+    q: "Mirrored queues vs Quorum queues — which to choose in 2026",
+    a: `MIRRORED (CLASSIC) QUEUES: legacy HA. The data is mirrored to N nodes. Fast, but has fundamental issues with network partitions — under certain failure modes, messages can be lost.
+
+RabbitMQ officially DEPRECATED mirrored queues in 3.10+. Do not pick them for new code.
+
+QUORUM QUEUES: the modern replacement. Based on the Raft consensus algorithm, designed for safety over speed.
+
+ PROPERTY              | Mirrored (classic)    | Quorum
+-----------------------|-----------------------|----------------------
+ Replication           | leader + N replicas   | Raft (odd N, usually 3 or 5)
+ Partition behavior    | Known data loss risks | Safe — minority partition stops accepting
+ Max throughput        | Higher (synchronous)  | Lower (Raft commit)
+ Latency               | Lower                 | Higher (consensus overhead)
+ Message size          | OK for large msgs     | Poor for very large msgs
+ Ordering guarantees   | Best-effort           | Strong per-queue
+ Producer confirms     | Standard              | Strongly recommended
+
+WHEN TO USE QUORUM:
+• Anything that matters for correctness (payments, orders, anything requiring durability).
+• When you can tolerate ~10-30% lower throughput for strong consistency.
+• For messages < ~1 MB. Larger → consider shoveling to object storage with a pointer.
+
+WHEN NOT TO USE QUORUM:
+• Very low-latency, best-effort ingestion of observability data. Use streams (new) or classic queues.
+• Huge messages (files, images). Use S3/MinIO with a pointer.
+
+STREAMS (RabbitMQ 3.9+): a log-structured variant that competes with Kafka for replay/retention. Best for event-sourcing, analytics, audit trails. Not for task queues.`,
+    keywords: ["mirrored", "quorum", "raft", "rabbitmq", "HA"],
+  },
+  {
+    id: 107, level: "senior", topic: "patterns",
+    q: "Back-pressure — what happens when consumers can't keep up",
+    a: `BACK-PRESSURE is the signal from a slow consumer to the producer saying "slow down or I'll drop messages."
+
+WHY IT MATTERS: without it, unbounded queue growth → producer runs out of memory OR broker runs out of disk OR latency explodes OR messages time out and get reprocessed.
+
+STRATEGIES (pick based on your domain):
+
+1. BLOCK THE PRODUCER (sync, simplest)
+   The broker refuses to accept new messages if the queue is full.
+   • RabbitMQ: policy max-length + overflow = reject-publish → publisher gets a confirm-reject.
+   • Kafka: batch.size + linger.ms full → send() blocks.
+   Good for: internal systems where losing latency is OK.
+
+2. DROP OLDEST / NEWEST (lossy)
+   • max-length-bytes + overflow = drop-head (RabbitMQ).
+   • Kafka retention: old messages deleted based on bytes or time.
+   Good for: metrics, logs, anything where the NEWEST data matters and history is cheap to lose.
+
+3. SCALE OUT CONSUMERS
+   Kafka: add consumers to the group → rebalances partitions.
+   RabbitMQ: add workers on the same queue → competing consumers.
+   Celery: spin up more workers.
+   Constraint: Kafka parallelism is capped at partition count.
+
+4. ROUTE TO A DIFFERENT QUEUE (shed load)
+   If primary queue is full, fire to an "overflow" queue with a fast consumer that writes to S3. Replay later.
+
+5. END-TO-END THROTTLING
+   Upstream (API gateway, ingress rate limiter) drops requests before they create messages. Counter-intuitive but often the right answer.
+
+MONITORING SIGNALS YOU NEED:
+• Queue depth per queue/partition.
+• Consumer lag (messages behind head).
+• Consumer processing latency (p50, p99).
+• Producer publish latency.
+
+CLASSIC INTERVIEW SCENARIO:
+"Your consumer is 10x slower than your producer. What do you do?"
+Wrong: "Add more consumers." (Band-aid.)
+Good: "Figure out WHY — CPU-bound? Bad code? DB contention? Downstream slow? Fix the root cause. Scaling is a short-term fix."`,
+    keywords: ["back-pressure", "throttling", "consumer lag", "overflow"],
+  },
+  {
+    id: 108, level: "senior", topic: "comparison",
+    q: "Message ordering guarantees — per broker, per scope",
+    a: `"Is this ordered?" is one of the most misunderstood interview questions. The answer is always "ordered in what scope?".
+
+ BROKER           | Global  | Per-Key  | Per-Queue | Per-Partition
+------------------|---------|----------|-----------|----------------
+ RabbitMQ         | ✗       | ✓ hash   | ✓         | N/A
+ Kafka            | ✗       | ✓ hash   | N/A       | ✓
+ Celery           | ✗       | ✗        | ✗         | N/A
+ Redis Streams    | ✗       | ✗        | ✓         | ✓ (consumer group)
+ NATS JetStream   | ✗       | ✗        | ✓ stream  | ✓
+ SQS Standard     | ✗       | ✗        | ✗         | N/A
+ SQS FIFO         | ✗       | ✓ GroupId| N/A       | N/A
+
+WHAT "PER-KEY" MEANS:
+Messages with key K always go to the same shard/partition → all messages for K are read in order they were written.
+
+WHEN ORDERING BREAKS EVEN WHEN "GUARANTEED":
+1. Kafka: consumer with multiple threads processing messages from one partition out of order (unless you manually serialize).
+2. RabbitMQ: multiple consumers on one queue (competing consumers) → each gets messages in order but the combined processing is NOT ordered.
+3. Any retry: a failed message going to a retry queue breaks the sequence.
+4. Scaling from 1 partition to N: old "ordered" stream is not ordered across the split.
+
+WHAT TO TELL AN INTERVIEWER:
+"I don't assume ordering unless the scope is explicit. If I need ordering for a user's actions, I use per-key partitioning (Kafka partition key = user_id, or RabbitMQ consistent-hash exchange). And I make the consumer idempotent so retries don't break invariants."
+
+WHEN YOU DON'T NEED ORDERING:
+• Event-driven consumers that operate on the latest snapshot anyway.
+• Idempotent aggregate updates (counter += 1 using DB increment).
+• Fan-out notifications where order doesn't affect outcome.
+
+WHEN YOU GENUINELY NEED GLOBAL ORDERING:
+Almost never in practice. If the interviewer is pushing for it, ask "what's the business reason?" — often it turns out you need per-key ordering, not global.`,
+    keywords: ["ordering", "partition", "per-key", "FIFO"],
+  },
+  {
+    id: 109, level: "tricky", topic: "patterns",
+    q: "✅ Good vs ❌ Bad — designing the consumer",
+    a: `Side-by-side: a consumer that survives production vs one that looks fine in dev but breaks under load.
+
+✅ GOOD — production-ready consumer:
+
+  def handle(msg):
+      idem_key = msg.headers["idempotency_key"]
+
+      with db.transaction():
+          if db.seen.exists(idem_key):
+              return                          # duplicate, no-op
+          db.seen.insert(idem_key)
+
+          try:
+              payload = schema.parse(msg.body)   # validate FIRST
+          except SchemaError as e:
+              metrics.inc("consumer.bad_payload")
+              dead_letter(msg, reason=str(e))
+              return
+
+          process(payload)                       # business logic
+
+      broker.ack(msg)                            # ack ONLY after tx commits
+
+WHY: idempotent, validates the payload, bad payloads go to DLQ not retry loop, ack happens after commit (so crashes replay safely).
+
+❌ BAD — the "it works in dev" consumer:
+
+  def handle(msg):
+      broker.ack(msg)                            # ack FIRST — crash = data loss
+      try:
+          payload = json.loads(msg.body)
+          process(payload)                       # no idempotency
+      except Exception:
+          pass                                   # swallow → silent failures
+                                                  # no DLQ, no metrics
+
+WHY BAD (each line):
+• Ack first → crash between ack and process = message is gone, no retry, no replay.
+• No idempotency → redelivery causes double-charge, double-email, double-insert.
+• Catch-all except + pass → silent failure. You will learn about the bug from a customer, not a metric.
+• No DLQ → bad payloads retry forever, blocking the queue.
+
+OBSERVABILITY CHECKLIST:
+1. Messages in, messages acked, messages DLQ'd — all counters.
+2. Per-message processing time histogram (p50, p95, p99).
+3. Consumer lag / queue depth gauge.
+4. Alert on DLQ growth RATE (not absolute count — growth means something is wrong NOW).
+5. Correlation ID in every log line so you can trace one message across services.`,
+    keywords: ["consumer", "idempotent", "DLQ", "ack", "observability"],
+  },
+  {
+    id: 110, level: "senior", topic: "patterns",
+    q: "Transactional Outbox — publishing events reliably after a DB commit",
+    a: `THE PROBLEM: you save an order to your database and publish OrderCreated to Kafka. How do you guarantee both happen together?
+
+  # naive (bad)
+  db.orders.insert(order)
+  kafka.publish("orders", OrderCreated(order.id))
+  # what if we crash between these? the order exists but no one knows.
+
+  # naive (other direction, also bad)
+  kafka.publish("orders", OrderCreated(order.id))
+  db.orders.insert(order)
+  # published an event for an order that might not exist.
+
+Two-phase commit across DB and Kafka is operationally terrible. The industry standard is the OUTBOX PATTERN.
+
+THE PATTERN:
+1. In the SAME transaction as inserting the order, insert a row into an "outbox" table in the SAME database.
+
+       BEGIN;
+         INSERT INTO orders(...);
+         INSERT INTO outbox (id, topic, payload, created_at) VALUES (...);
+       COMMIT;
+
+2. A separate worker (or Debezium, or a cron) reads the outbox table and publishes to Kafka. On successful publish, it marks the row as sent (or deletes it).
+
+3. If publishing fails, the outbox row is retried — the DB is the source of truth.
+
+GUARANTEES:
+• At-least-once delivery (publisher might crash between publish and mark-sent → duplicate → consumer must be idempotent).
+• No "ghost events" — the event only exists if the DB commit succeeded.
+
+VARIATIONS:
+• POLLING OUTBOX: simple worker that SELECTs unsent rows every 100ms. Works, adds poll latency.
+• CDC OUTBOX (Debezium, Postgres logical replication): reads the DB's transaction log and publishes changes. Near-zero latency, no polling load.
+• IN-PROCESS OUTBOX: worker runs inside the same service, same connection pool. Fine for small scale.
+
+WHEN NOT TO USE:
+• Best-effort events (metrics, analytics). The overhead isn't justified.
+• Two-service communication where you control both sides and can tolerate loss.
+
+COMMON FOLLOW-UP:
+"How do you deduplicate on the consumer side?"
+→ See id 103 — idempotency key stored in the consumer's own DB.`,
+    keywords: ["outbox", "CDC", "transactional", "publishing", "reliability"],
+  },
 ];

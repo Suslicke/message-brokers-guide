@@ -1,13 +1,14 @@
 {
-  "name": "interview-prep-message-brokers",
+  "name": "message-broker-interview-prep",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "type": "module",
-  "description": "Interview prep drill: Celery, RabbitMQ, Kafka, message brokers — from trainee to lead level",
+  "description": "Interactive interview prep — RabbitMQ, Kafka, Celery, message brokers. Trainee to Lead.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "vite build && wrangler deploy"
   },
   "dependencies": {
     "lucide-react": "^0.383.0",
@@ -15,7 +16,9 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.32.3",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.3.1"
+    "vite": "^7.3.2",
+    "wrangler": "^4.83.0"
   }
 }
