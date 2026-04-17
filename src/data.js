@@ -1,0 +1,1941 @@
+// ============== CONFIGURATION ==============
+
+export const LEVELS = {
+  trainee: { label: "TRAINEE", color: "#7dd3a0", order: 1 },
+  junior: { label: "JUNIOR", color: "#7dc8e8", order: 2 },
+  middle: { label: "MIDDLE", color: "#d4a574", order: 3 },
+  senior: { label: "SENIOR", color: "#e89a7e", order: 4 },
+  lead: { label: "LEAD", color: "#c97b9e", order: 5 },
+  tricky: { label: "TRICKY", color: "#e84855", order: 6 },
+};
+
+export const TOPICS = {
+  concepts: "Message Brokers: Concepts",
+  rabbitmq: "RabbitMQ",
+  kafka: "Kafka",
+  celery: "Celery",
+  redis: "Redis Streams",
+  nats: "NATS",
+  sqs: "AWS SQS",
+  comparison: "Broker Comparison",
+  patterns: "Patterns & Architecture",
+};
+
+// ============== QUESTIONS ==============
+
+export const QUESTIONS = [
+  // ============== TRAINEE / CONCEPTS ==============
+  {
+    id: 1, level: "trainee", topic: "concepts",
+    q: "What is a message broker and why do we need one?",
+    a: `A message broker is a middleware that enables services to communicate by exchanging messages asynchronously. The producer sends a message to the broker; the broker routes/stores it; the consumer reads it.
+
+Why we need it:
+• Decoupling — producer doesn't know about consumers
+• Asynchronicity — producer doesn't wait for processing
+• Reliability — messages persist even if consumer is down
+• Load leveling — smooths traffic spikes (buffer)
+• Scalability — add more consumers to process faster`,
+    keywords: ["decoupling", "async", "buffer", "producer", "consumer"],
+  },
+  {
+    id: 2, level: "trainee", topic: "concepts",
+    q: "What is the difference between synchronous and asynchronous communication?",
+    a: `SYNCHRONOUS: The caller blocks and waits for a response (HTTP request/response, gRPC). If the receiver is down — you get an error immediately.
+
+ASYNCHRONOUS: The caller sends a message and continues execution. Processing happens "sometime later". If the receiver is down — the message waits in the queue.
+
+Rule of thumb: sync for "I need the answer right now", async for "do this eventually / in the background / notify others".`,
+    keywords: ["blocking", "non-blocking", "HTTP", "queue"],
+  },
+  {
+    id: 3, level: "trainee", topic: "concepts",
+    q: "Producer, Consumer, Queue, Topic, Message — explain each.",
+    a: `• PRODUCER (publisher) — sends messages
+• CONSUMER (subscriber) — receives and processes messages
+• MESSAGE — a unit of data (payload + metadata/headers)
+• QUEUE — FIFO buffer; typically one message goes to ONE consumer (point-to-point)
+• TOPIC — a publish-subscribe channel; the message is delivered to ALL subscribers
+• EXCHANGE (RabbitMQ-specific) — the routing layer between producer and queue`,
+    keywords: ["FIFO", "pub-sub", "point-to-point"],
+  },
+  {
+    id: 4, level: "trainee", topic: "celery",
+    q: "What is Celery and what is it used for?",
+    a: `Celery is a distributed task queue for Python. It lets you run functions asynchronously (in the background) or on a schedule.
+
+Typical use cases:
+• Sending emails/SMS/notifications
+• Image/video processing
+• Report generation
+• Integrating with slow third-party APIs
+• Periodic jobs (Celery Beat) — cleanup, sync, etc.
+
+Architecture: Client -> Broker (RabbitMQ/Redis) -> Worker -> Result Backend (optional).`,
+    keywords: ["task queue", "worker", "beat", "background"],
+  },
+  {
+    id: 5, level: "trainee", topic: "rabbitmq",
+    q: "What is RabbitMQ in simple terms?",
+    a: `RabbitMQ is a message broker that implements the AMQP protocol. It accepts messages from producers, routes them through EXCHANGES into QUEUES, and delivers them to consumers.
+
+Key feature: smart routing via exchanges (direct, topic, fanout, headers). It's a "smart broker, dumb consumer" — the broker decides who gets what.`,
+    keywords: ["AMQP", "exchange", "queue", "routing"],
+  },
+
+  // ============== JUNIOR ==============
+  {
+    id: 10, level: "junior", topic: "rabbitmq",
+    q: "What types of Exchanges exist in RabbitMQ?",
+    a: `1. DIRECT — routes by exact match of the routing_key. Example: key="error" -> queue "errors"
+
+2. FANOUT — broadcasts to ALL bound queues, ignoring the routing_key. Classic pub-sub.
+
+3. TOPIC — routes by pattern matching on routing_key with wildcards:
+   • * (asterisk) — matches exactly one word
+   • # (hash) — matches zero or more words
+   Example: "order.*.created" matches "order.us.created"
+
+4. HEADERS — routes by message headers instead of routing_key. Rarely used.
+
+5. DEFAULT (nameless) — special direct exchange; routing_key = queue name.`,
+    keywords: ["direct", "fanout", "topic", "headers", "binding"],
+  },
+  {
+    id: 11, level: "junior", topic: "rabbitmq",
+    q: "What is ACK / NACK? What happens if a consumer doesn't send an ack?",
+    a: `ACK (acknowledgement) — the consumer tells the broker "I processed the message, delete it".
+NACK (negative ack) / REJECT — the consumer says "I can't process this" (optionally with requeue=true/false).
+
+If the consumer doesn't send an ack and disconnects (crash, network issue), RabbitMQ automatically redelivers the message to another consumer.
+
+auto_ack=True is DANGEROUS: the message is considered acked the moment it's delivered. If the worker crashes mid-processing — the message is LOST.
+
+Best practice: manual ack, AFTER successful processing. Set a reasonable consumer_timeout.`,
+    keywords: ["acknowledgement", "redelivery", "auto_ack", "consumer_timeout"],
+  },
+  {
+    id: 12, level: "junior", topic: "kafka",
+    q: "What is Kafka and how is it different from RabbitMQ at a basic level?",
+    a: `Kafka is a distributed streaming platform — essentially a distributed, append-only, partitioned log.
+
+Key difference from RabbitMQ:
+• Kafka stores messages for a long time (retention by time or size), even after reading
+• RabbitMQ traditionally deletes a message after ack
+• Kafka — "dumb broker, smart consumer": the consumer tracks its own offset
+• RabbitMQ — "smart broker": the broker handles routing and state
+
+Kafka is optimized for high throughput (millions of msg/sec), RabbitMQ for flexible routing and low latency.`,
+    keywords: ["log", "partition", "retention", "offset", "streaming"],
+  },
+  {
+    id: 13, level: "junior", topic: "kafka",
+    q: "What is a Partition and why do we need it?",
+    a: `A Partition is a physical segment of a Topic. Each topic is split into N partitions, each of which is an ordered, immutable log of messages.
+
+Why partitions exist:
+• PARALLELISM — different consumers in a group read different partitions simultaneously
+• SCALABILITY — partitions are distributed across brokers in the cluster
+• ORDERING — ordering is guaranteed WITHIN a partition, NOT across the whole topic
+
+The producer decides which partition a message goes to: by key (hash(key) % N) or round-robin if no key.`,
+    keywords: ["parallelism", "ordering", "key", "hash", "log"],
+  },
+  {
+    id: 14, level: "junior", topic: "celery",
+    q: "What's the difference between delay() and apply_async()?",
+    a: `delay() is a shortcut for apply_async() with minimal arguments.
+
+task.delay(arg1, arg2)
+# equivalent to:
+task.apply_async(args=[arg1, arg2])
+
+apply_async() lets you pass extra options:
+• countdown — delay execution by N seconds
+• eta — run at a specific datetime
+• expires — task expires if not picked up
+• queue — route to a specific queue
+• priority — message priority
+• retry, retry_policy
+• headers, link (chaining)
+
+Rule: delay() for simple calls, apply_async() when you need control.`,
+    keywords: ["delay", "apply_async", "countdown", "eta", "queue"],
+  },
+  {
+    id: 15, level: "junior", topic: "celery",
+    q: "What is a Result Backend and is it always required?",
+    a: `The Result Backend stores the results of task execution (state: PENDING/STARTED/SUCCESS/FAILURE, return value, traceback).
+
+Typical backends: Redis, RabbitMQ (rpc://), database, Memcached.
+
+Is it required? NO. If you don't care about the result (fire-and-forget), disable it:
+@app.task(ignore_result=True)
+
+Why disable when not needed:
+• Performance — every result is an extra write to the backend
+• Resource waste — results hang around until expiration
+• Common mistake: using RabbitMQ as backend creates a unique queue PER task -> quickly overloads the broker`,
+    keywords: ["result_backend", "ignore_result", "redis", "rpc"],
+  },
+
+  // ============== MIDDLE ==============
+  {
+    id: 20, level: "middle", topic: "rabbitmq",
+    q: "Explain Dead Letter Queue (DLQ). How do you set it up?",
+    a: `A Dead Letter Queue is where messages go that cannot be processed. A message becomes "dead" when:
+• It's nacked/rejected with requeue=false
+• TTL expires
+• Queue length limit is reached (x-max-length)
+
+Setup (via arguments on queue declaration):
+channel.queue_declare(
+  queue='main_queue',
+  arguments={
+    'x-dead-letter-exchange': 'dlx',
+    'x-dead-letter-routing-key': 'failed',
+    'x-message-ttl': 60000,
+  }
+)
+
+Pattern: main_queue -> (reject/ttl) -> DLX -> dlq. Then a separate process / human analyzes the DLQ. Combined with retry exchange, you get a full retry-with-backoff flow.`,
+    keywords: ["DLQ", "DLX", "TTL", "x-dead-letter-exchange", "retry"],
+  },
+  {
+    id: 21, level: "middle", topic: "rabbitmq",
+    q: "What is Prefetch Count and how do you tune it?",
+    a: `Prefetch count (QoS) — the maximum number of unacked messages the broker will send to one consumer at a time.
+
+channel.basic_qos(prefetch_count=10)
+
+Trade-off:
+• prefetch=1 — fair distribution between consumers, but higher latency (round-trips)
+• prefetch=HIGH — higher throughput, but "fast" consumers hog messages while "slow" ones sit idle; also more RAM usage
+
+Tuning:
+• Fast tasks (< 100ms) -> prefetch 50-200
+• Slow tasks (> 1s) -> prefetch 1-10
+• Uneven tasks -> lower prefetch for fair distribution
+• Formula: prefetch ~ (round-trip time / processing time) * desired_utilization`,
+    keywords: ["QoS", "basic_qos", "fairness", "throughput"],
+  },
+  {
+    id: 22, level: "middle", topic: "kafka",
+    q: "What is a Consumer Group? What are rebalancing issues?",
+    a: `A Consumer Group is a set of consumers that collectively read from a topic. Kafka distributes partitions among members of the group: each partition goes to EXACTLY ONE consumer in the group.
+
+Rules:
+• If consumers > partitions — the extras are idle
+• If consumers < partitions — some consumers handle multiple partitions
+• Different groups read INDEPENDENTLY (each has its own offset)
+
+Rebalancing — reassignment of partitions when a consumer joins/leaves. Problems:
+• "STOP THE WORLD" — in the old protocol, all consumers stop during rebalancing
+• Can be triggered by a slow consumer (session timeout expires)
+• Solution: Cooperative Sticky Assignor (KIP-429) — incremental rebalancing
+• Tune session.timeout.ms, heartbeat.interval.ms, max.poll.interval.ms`,
+    keywords: ["consumer group", "rebalancing", "cooperative sticky", "offset"],
+  },
+  {
+    id: 23, level: "middle", topic: "kafka",
+    q: "What delivery guarantees does Kafka provide? (At most / at least / exactly once)",
+    a: `AT MOST ONCE — the message is delivered 0 or 1 times. Producer: acks=0. Consumer commits offset BEFORE processing. Loss possible, duplicates not.
+
+AT LEAST ONCE — 1 or more times (the default). Producer: acks=all, retries>0. Consumer commits offset AFTER processing. Duplicates possible -> consumer must be idempotent.
+
+EXACTLY ONCE (EOS) — exactly once. Requires:
+• enable.idempotence=true on producer (Producer ID + sequence number)
+• Transactions: producer.initTransactions(), beginTransaction(), commitTransaction()
+• isolation.level=read_committed on consumer
+• Works for "consume -> process -> produce" inside Kafka. For external side effects (DB, HTTP) you still need idempotency on your side.`,
+    keywords: ["acks", "idempotence", "transactions", "EOS", "isolation.level"],
+  },
+  {
+    id: 24, level: "middle", topic: "celery",
+    q: "How do task retries work? Configure a retry with exponential backoff.",
+    a: `@app.task(
+  bind=True,
+  autoretry_for=(RequestException,),
+  retry_backoff=True,          # exponential: 1, 2, 4, 8, 16...
+  retry_backoff_max=600,        # cap
+  retry_jitter=True,            # add random jitter — prevents thundering herd
+  retry_kwargs={'max_retries': 5},
+)
+def fetch_data(self, url):
+    try:
+        return requests.get(url).json()
+    except SomeOtherError as exc:
+        raise self.retry(exc=exc, countdown=2 ** self.request.retries)
+
+Key points:
+• bind=True — gives access to self (task instance)
+• self.request.retries — current retry number
+• Retry = re-queuing the task (the message returns to the broker)
+• MaxRetriesExceededError is thrown after max_retries
+• JITTER is critical — without it, 1000 failed tasks all retry at the same moment -> DDoS on your own infrastructure`,
+    keywords: ["autoretry_for", "backoff", "jitter", "max_retries", "bind"],
+  },
+  {
+    id: 25, level: "middle", topic: "celery",
+    q: "What are Celery queues and how do you route tasks?",
+    a: `Celery supports multiple queues for segregating tasks by priority/type/resources.
+
+# celery config
+task_queues = {
+    Queue('default', routing_key='task.default'),
+    Queue('emails', routing_key='task.email'),
+    Queue('heavy', routing_key='task.heavy'),
+}
+task_routes = {
+    'myapp.tasks.send_email': {'queue': 'emails'},
+    'myapp.tasks.generate_report': {'queue': 'heavy'},
+}
+
+Run workers on specific queues:
+celery -A app worker -Q emails --concurrency=20
+celery -A app worker -Q heavy --concurrency=2
+
+Why separate:
+• CPU-heavy tasks shouldn't block fast tasks
+• Critical tasks (payments) in a dedicated queue
+• Different concurrency tuning per queue type
+• Scale workers independently`,
+    keywords: ["task_routes", "queues", "concurrency", "-Q"],
+  },
+  {
+    id: 26, level: "middle", topic: "patterns",
+    q: "What is idempotency and why is it critical for message brokers?",
+    a: `Idempotency — the property where repeated execution of an operation gives the same result as a single execution.
+
+f(x) == f(f(x)) == f(f(f(x)))
+
+Why it matters: almost all brokers provide AT LEAST ONCE delivery by default. Duplicates WILL happen:
+• Consumer crashed after processing but before ack
+• Producer retried after a timeout but the message actually went through
+• Rebalancing in Kafka
+
+How to achieve idempotency:
+1. Natural — SET operations, upserts by a unique key
+2. Idempotency key — client-side unique_id; check "have I seen this?" in a DB/Redis before processing
+3. Deduplication table — UNIQUE constraint on message_id
+4. Optimistic locking — version/updated_at
+5. State machine — only allow valid transitions (pending -> paid, but not paid -> paid)`,
+    keywords: ["idempotency key", "deduplication", "upsert", "at least once"],
+  },
+
+  // ============== SENIOR ==============
+  {
+    id: 30, level: "senior", topic: "rabbitmq",
+    q: "How does clustering work in RabbitMQ? What are Quorum Queues?",
+    a: `CLASSIC CLUSTER: nodes share metadata (exchanges, bindings, users), but queues by default live on ONE node (leader). Messages do NOT replicate automatically.
+
+CLASSIC MIRRORED QUEUES (deprecated since 3.8): replication via policy "ha-mode". Problems: split-brain, data loss during network partitions, slow sync.
+
+QUORUM QUEUES (the modern replacement):
+• Based on the Raft consensus algorithm
+• Replicated across N nodes, strict majority quorum
+• Guarantees safety over availability (CP in CAP)
+• No message loss during network partitions
+• Slower than classic, but predictable
+• Used for critical messages
+
+STREAMS (3.9+): append-only log a la Kafka, for high-throughput use cases within RabbitMQ.
+
+Rule: Quorum Queues for business-critical messages, Classic for non-critical/ephemeral.`,
+    keywords: ["raft", "quorum", "mirrored", "streams", "split-brain"],
+  },
+  {
+    id: 31, level: "senior", topic: "kafka",
+    q: "How does ISR, acks=all, and min.insync.replicas work?",
+    a: `ISR (In-Sync Replicas) — the set of replicas that are "caught up" with the leader (replica.lag.time.max.ms).
+
+acks producer setting:
+• acks=0 — fire and forget, no ACK at all (fastest, loss possible)
+• acks=1 — leader wrote the message (default before 3.0). Loss possible if leader dies before followers replicate
+• acks=all (or -1) — ALL replicas in ISR confirmed. Safest
+
+min.insync.replicas — the minimum size of ISR for a write to succeed. If ISR shrinks below this, the producer gets NotEnoughReplicasException.
+
+Standard production config:
+• replication.factor=3
+• min.insync.replicas=2
+• acks=all
+
+This means: you tolerate losing 1 node without downtime or data loss. If 2 nodes die — writes stop (but data is preserved on the survivor). This is the classic C-over-A trade-off.
+
+A common pitfall: replication.factor=3 but min.insync.replicas=1 -> under the illusion of "safety" you can actually lose data.`,
+    keywords: ["ISR", "acks", "min.insync.replicas", "replication.factor"],
+  },
+  {
+    id: 32, level: "senior", topic: "kafka",
+    q: "Explain Log Compaction vs time-based retention.",
+    a: `TIME/SIZE RETENTION (default): messages are deleted after retention.ms (default 7 days) or when topic size exceeds retention.bytes. Good for event streams.
+
+LOG COMPACTION (cleanup.policy=compact): keeps only the LATEST message per key. Deleted keys are marked with a "tombstone" (null value).
+
+Use cases for compact:
+• Storing current state (e.g., "latest user profile")
+• Changelog topics in Kafka Streams (rebuildable state)
+• Database CDC
+• Configuration storage
+
+Mechanics:
+• Active segment — always written to, not compacted
+• Inactive segments — periodically compacted by LogCleaner
+• min.cleanable.dirty.ratio — when to trigger compaction (default 0.5)
+• delete.retention.ms — how long tombstones are kept
+
+Combined: cleanup.policy=compact,delete — both compaction and time-based cleanup.
+
+Trick: compaction is NOT instant. You can read duplicate keys between compactions.`,
+    keywords: ["compaction", "tombstone", "cleanup.policy", "LogCleaner"],
+  },
+  {
+    id: 33, level: "senior", topic: "celery",
+    q: "Celery is stuck: tasks hang, workers don't pick up. Diagnosis algorithm?",
+    a: `1. CHECK THE BROKER
+   • rabbitmqctl list_queues name messages consumers
+   • redis-cli LLEN celery
+   • Is the queue growing? Are there consumers?
+
+2. CHECK WORKERS
+   • celery -A app inspect active — what's running right now
+   • celery -A app inspect reserved — what's been prefetched
+   • celery -A app inspect stats — stats per worker
+   • ps aux | grep celery — are the processes alive
+
+3. COMMON CAUSES
+   • Task times out but visibility_timeout (Redis) is shorter -> duplicate deliveries
+   • worker_prefetch_multiplier too high -> workers grabbed tasks and are sitting on them
+   • task_acks_late=False + long task -> worker killed by OOM, task lost
+   • Deadlock in the task (e.g., SELECT FOR UPDATE + external call)
+   • DNS/network issue to broker
+   • Task not imported on worker (wrong module) -> NotRegistered error in logs
+
+4. TOOLS
+   • Flower — web UI monitoring
+   • celery events — real-time event log
+   • Prometheus exporter + Grafana
+
+5. FIX
+   • worker_prefetch_multiplier=1 for long tasks
+   • task_acks_late=True + task_reject_on_worker_lost=True
+   • soft_time_limit < time_limit < broker visibility_timeout
+   • Configure health checks and auto-restart`,
+    keywords: ["inspect", "prefetch_multiplier", "acks_late", "visibility_timeout", "flower"],
+  },
+  {
+    id: 34, level: "senior", topic: "comparison",
+    q: "When to choose Kafka, when RabbitMQ, when Celery? Decision matrix.",
+    a: `CHOOSE RABBITMQ:
+• Complex routing (topic/headers exchanges)
+• Task queues with priorities
+• Request/Reply, RPC patterns
+• Low latency (< 10ms)
+• Moderate throughput (up to ~50k msg/sec)
+• Need for DLQ, TTL, per-message guarantees
+• Traditional enterprise messaging
+
+CHOOSE KAFKA:
+• Event sourcing / event log
+• Stream processing
+• Very high throughput (millions msg/sec)
+• Need to replay events (new consumers read from beginning)
+• Multiple independent consumers of the same stream
+• Event-driven microservices (CDC, Outbox)
+• Logs/metrics aggregation
+• Long retention (days/weeks/months)
+
+CHOOSE CELERY:
+• Python-only application
+• Background tasks (emails, reports, image processing)
+• Scheduled tasks (Celery Beat)
+• Simple workflows (chain, group, chord)
+• You need a ready-made retry/ack/monitoring framework, not "just a message bus"
+
+HYBRID: Celery with a RabbitMQ broker for app-level tasks + Kafka for event bus between services. Very common in real systems.
+
+ANTI-PATTERNS:
+- Kafka as a task queue (no ack-per-message, rebalancing issues)
+- RabbitMQ as an event store (deletes on ack, small retention)
+- Celery for a high-throughput event stream`,
+    keywords: ["decision matrix", "use case", "hybrid", "anti-pattern"],
+  },
+  {
+    id: 35, level: "senior", topic: "patterns",
+    q: "Transactional Outbox Pattern — what is it and what problem does it solve?",
+    a: `PROBLEM: in a microservice, you need to (1) change the DB AND (2) publish an event to the broker atomically. If you do them separately, you get a dual-write problem:
+• DB succeeded, broker failed -> no event -> inconsistency
+• Broker succeeded, DB failed -> phantom event -> other services acted on nothing
+
+SOLUTION — Transactional Outbox:
+1. In the same transaction that writes business data, INSERT a row into an 'outbox' table
+2. A separate process (Relay) reads from outbox and publishes to the broker
+3. After successful publish — mark the row as sent (or delete it)
+
+BEGIN;
+  INSERT INTO orders (...) VALUES (...);
+  INSERT INTO outbox (aggregate_id, event_type, payload) VALUES (...);
+COMMIT;
+
+IMPLEMENTATIONS:
+• Polling Publisher — simple SELECT FROM outbox WHERE sent=false (watch out for polling lag)
+• CDC (Debezium) — reads the DB WAL/binlog, publishes to Kafka. More complex but real-time
+• Listen/Notify (Postgres) — for low-latency
+
+GUARANTEE: at-least-once (duplicates possible on relay retries) -> consumers must be idempotent.
+
+COMPANION PATTERN — Inbox on the consumer side: store processed message_ids to reject duplicates.`,
+    keywords: ["outbox", "dual-write", "CDC", "Debezium", "inbox"],
+  },
+  {
+    id: 36, level: "senior", topic: "patterns",
+    q: "What is the Saga pattern and how is it implemented via a broker?",
+    a: `SAGA — a distributed transaction split into a chain of local transactions. Each step publishes an event that triggers the next step. On failure — compensating transactions roll back previous steps.
+
+Example: order in an e-commerce system
+1. OrderService: CREATE_ORDER -> OrderCreated
+2. PaymentService: CHARGE_CARD -> PaymentCompleted (or PaymentFailed)
+3. InventoryService: RESERVE_STOCK -> StockReserved (or OutOfStock)
+4. ShippingService: CREATE_SHIPMENT -> Shipped
+
+If step 3 fails -> compensations: RefundPayment, CancelOrder.
+
+TWO STYLES:
+
+CHOREOGRAPHY (event-driven):
+• Services subscribe to events and react
+• No central coordinator
+• Pros: loosely coupled
+• Cons: hard to trace the full flow, circular dependencies possible
+
+ORCHESTRATION:
+• A central orchestrator (Saga Manager) explicitly commands each service
+• Temporal, Camunda, AWS Step Functions, or custom state machine
+• Pros: visible flow, easier debugging
+• Cons: orchestrator is a single point of complexity
+
+KEY POINTS:
+• Compensations are not always possible (can't "un-send" an email -> send an apology instead)
+• Isolation is weak — an intermediate state is visible to other transactions
+• Each step must be idempotent
+• Timeouts and retries at every step`,
+    keywords: ["saga", "choreography", "orchestration", "compensation", "temporal"],
+  },
+
+  // ============== LEAD ==============
+  {
+    id: 40, level: "lead", topic: "kafka",
+    q: "Designing a system for 1M events/sec. Architecture, sizing, bottlenecks?",
+    a: `ROUGH SIZING:
+• 1M msg/sec * avg 1KB = 1 GB/sec = 8 Gbps network
+• Per day: ~86 TB raw, with RF=3 -> ~260 TB/day
+
+CLUSTER:
+• ~30-50 brokers with NVMe SSDs
+• Dedicated 10/25 Gbps network, separate for replication and client traffic
+• Partitioning strategy: 3-5x number of broker cores (so ~300-500 partitions per hot topic)
+• Careful: too many partitions (>4000/broker) -> controller/ZK/KRaft bottleneck
+
+PRODUCER:
+• Batching: linger.ms=10-100, batch.size=32-64KB
+• Compression: lz4 or zstd (3-5x savings, low CPU)
+• acks=all, enable.idempotence=true
+• max.in.flight.requests.per.connection=5 (compatible with idempotence)
+• Partitioner — sticky partitioning for better batching
+
+CONSUMER:
+• Consumer count = partitions
+• fetch.min.bytes=1MB, fetch.max.wait.ms=500 (batching on the read side)
+• Cooperative rebalancing
+• Don't commit on every message — batch commits
+
+BOTTLENECKS IN ORDER:
+1. NETWORK — almost always first. Jumbo frames, RSS, NIC tuning.
+2. DISK I/O — sequential writes love large page cache. Lots of RAM for OS cache.
+3. CPU — mostly SSL and compression. TLS offload / mTLS termination.
+4. GC pauses — G1GC tuning, 6-8GB heap (don't go huge, rely on page cache)
+5. Controller — in KRaft ok, in ZooKeeper watch metadata size
+
+MONITORING:
+• UnderReplicatedPartitions (must be 0)
+• RequestHandlerAvgIdlePercent (> 30%)
+• NetworkProcessorAvgIdlePercent
+• Consumer lag
+• p99 produce/fetch latency`,
+    keywords: ["sizing", "partitions", "batching", "compression", "page cache", "KRaft"],
+  },
+  {
+    id: 41, level: "lead", topic: "kafka",
+    q: "Exactly-once semantics end-to-end — how is it really achieved?",
+    a: `TRUE EOS is only achievable within Kafka itself (consume -> process -> produce). For external systems, you need additional layers.
+
+KAFKA INTERNAL EOS:
+
+1. IDEMPOTENT PRODUCER
+   • enable.idempotence=true
+   • Producer ID (PID) + Sequence Number on each write
+   • Broker deduplicates by (PID, partition, seq) — last 5 per partition
+   • Protects against duplicates from producer retries
+
+2. TRANSACTIONS
+   • transactional.id must be stable across producer restarts
+   • producer.initTransactions() — fencing via epoch (zombie fencing)
+   • beginTransaction() -> send to multiple partitions/topics -> commitTransaction()
+   • Atomicity across partitions via Transaction Coordinator + transaction log
+   • __consumer_offsets is also written transactionally
+
+3. CONSUMER
+   • isolation.level=read_committed — only reads committed messages
+   • Skip aborted messages (marked in __transaction_state)
+
+EOS OUTSIDE KAFKA — two approaches:
+
+A) IDEMPOTENT RECEIVER
+   • The consumer handles duplicates itself: deduplication table, upsert, business idempotency
+   • Simpler but shifts responsibility to every consumer
+
+B) TRANSACTIONAL SINKS
+   • Kafka Connect with exactly-once sink connectors
+   • Flink with two-phase commit sinks
+   • External system must support transactions or idempotent writes
+
+TRADE-OFFS:
+• Transactions cost ~3-5% throughput
+• Latency grows (commit has to be flushed)
+• Doesn't work well with very short transactions (high overhead)
+
+TRICK: many people think "enable.idempotence=true" = EOS. That's wrong. It's only deduplication at the producer level. Full EOS requires transactions + read_committed.`,
+    keywords: ["transactions", "PID", "epoch", "fencing", "read_committed", "two-phase commit"],
+  },
+  {
+    id: 42, level: "lead", topic: "patterns",
+    q: "Event-Driven Architecture: pros, cons, pitfalls. When NOT to use it?",
+    a: `PROS:
+• Loose coupling between services
+• Scalability — each service scales independently
+• Resilience — service failure doesn't cascade immediately
+• Auditability — event log is a natural audit trail
+• Temporal decoupling — producer and consumer don't need to be up at the same time
+
+CONS:
+• Eventual consistency — "read your writes" is not guaranteed
+• Hard to debug distributed flows -> tracing is mandatory (OpenTelemetry)
+• Schema evolution — a complex and unending problem
+• Testing — need contract tests, integration, chaos
+• Ordering guarantees are limited
+• "Message storms" — a retry loop can cascade
+
+DO NOT use EDA when:
+• Simple CRUD app with a single DB — a monolith will be cheaper
+• Strong consistency is required (finance, bookings) — use 2PC or sync
+• Team has no experience with distributed systems — operational cost is huge
+• Low load (< 100 rps) — overhead doesn't pay off
+• Tight deadlines — EDA requires maturity of infrastructure
+
+TYPICAL PITFALLS:
+
+1. GOD EVENTS — an event carries 50 fields "just in case" -> high coupling
+2. EVENTS AS COMMANDS — "UserCreateEvent" instead of "UserCreated" -> leaky intent
+3. NO SCHEMA REGISTRY — everyone parses JSON by hand, prod breaks
+4. NO VERSIONING — can't evolve the event
+5. SYNCHRONOUS CHAINS — event -> HTTP call -> event -> HTTP call -> no resilience benefit
+6. EVERYTHING AN EVENT — even simple RPC gets forced into pub/sub, complexity explodes
+7. NO IDEMPOTENCY — at-least-once + non-idempotent consumer = production incidents
+8. NO BACKPRESSURE — fast producer crushes slow consumer
+9. UNBOUNDED RETRIES — poison messages clog the queue
+10. MISSING DLQ MONITORING — errors silently pile up
+
+RULE OF THUMB: start with a monolith + internal queue. Migrate to EDA when the pain of the monolith exceeds the pain of distributed systems.`,
+    keywords: ["eventual consistency", "schema registry", "god events", "poison message", "DLQ"],
+  },
+  {
+    id: 43, level: "lead", topic: "patterns",
+    q: "Schema evolution: Avro, Protobuf, JSON Schema — how to choose? Compatibility?",
+    a: `COMPATIBILITY TYPES (Confluent Schema Registry):
+
+• BACKWARD (default) — new schema reads old data. Safe to upgrade CONSUMERS first.
+• FORWARD — old schema reads new data. Safe to upgrade PRODUCERS first.
+• FULL — both directions. Most conservative.
+• NONE — no checks (danger).
+• + _TRANSITIVE versions — check against all previous versions, not just the last one.
+
+FORMATS:
+
+AVRO:
++ Compact binary, schema embedded by ID
++ Rich typing (unions, logical types, defaults)
++ First-class Kafka/Confluent support
++ Schema evolution built into the spec
+- Requires schema registry (or bundling)
+- Dynamic languages (Python) — a bit awkward
+
+PROTOBUF:
++ Very fast, widely used (gRPC)
++ Strict typing, good tooling
++ Required/optional handled via field presence
+- Evolution rules are more manual (don't renumber tags!)
+- Less Kafka-friendly without the Confluent integration
+
+JSON SCHEMA:
++ Human-readable, debuggable
++ No special tooling for reading
+- Verbose (3-5x bigger than Avro)
+- Weaker type system (no int32/int64/fixed)
+- Parsing is slow
+
+EVOLUTION RULES (universal):
++ Adding fields with a default — backward compatible
++ Removing optional fields — forward compatible
++ Widening types (int -> long) — sometimes ok
+- Renaming fields — breaks everything (use aliases in Avro)
+- Changing types — break
+- Changing field tags (protobuf) — break
+- Adding required fields without defaults — break
+
+STRATEGY:
+1. Schema Registry is mandatory in production
+2. CI checks compatibility BEFORE merge
+3. Avro + BACKWARD for most event streams
+4. Protobuf for RPC-style contracts
+5. Canary — new consumer processes a small % to verify parsing
+6. Separate technical schema version from business "event version v2"`,
+    keywords: ["schema registry", "avro", "protobuf", "backward", "forward", "compatibility"],
+  },
+  {
+    id: 44, level: "lead", topic: "comparison",
+    q: "Design: collecting 500M events/day (clickstream) with analytics + real-time alerts.",
+    a: `INGESTION:
+• Edge -> HTTP collector (Go/Rust, low-latency) -> Kafka
+• ~6k events/sec avg, need to handle 30-50k peak
+• Topic: events-raw, ~50 partitions, RF=3, retention 7 days
+• Compression: zstd, ~5x savings
+
+SCHEMA:
+• Protobuf + Schema Registry
+• Envelope: {event_id, timestamp, user_id, session_id, event_type, payload}
+• event_id for deduplication (idempotency)
+
+PROCESSING LAYERS (Lambda / Kappa style):
+
+1. REAL-TIME (hot path):
+   • Kafka Streams / Flink consumes events-raw
+   • Windowed aggregations (tumbling 1-min, sliding 5-min)
+   • Publish aggregates to Kafka topic "events-agg-1m"
+   • Alert engine subscribes to aggregates, checks thresholds -> PagerDuty
+   • p95 latency target: < 30s from event to alert
+
+2. NEAR-REAL-TIME (warm path):
+   • Kafka Connect -> ClickHouse / Druid (for ad-hoc OLAP analytics)
+   • Materialized views for frequent queries
+   • Dashboards in Grafana/Superset
+
+3. BATCH (cold path):
+   • Kafka Connect -> S3 (Parquet, partitioned by date/event_type)
+   • Spark/Trino for heavy analytics, ML feature pipelines
+   • Retention: years
+
+RELIABILITY:
+• Producer: acks=all, idempotence, local disk buffer in case Kafka is unavailable
+• DLQ for unparseable events
+• Circuit breakers on the collector
+• Rate limiting per user_id to prevent abuse
+• Backpressure: collector must drop (with 429) before Kafka saturates
+
+DEDUPLICATION:
+• event_id = UUID generated on client
+• In Flink — KeyedState with TTL
+• In ClickHouse — ReplacingMergeTree by event_id
+
+OBSERVABILITY:
+• OpenTelemetry traces from client through the entire pipeline
+• Kafka lag monitoring — primary SLI
+• Alerts on: consumer lag > 5min, DLQ size > N, 5xx rate
+
+CAPACITY PLANNING:
+• 500M * 500 bytes * compression 5x = ~50GB/day * 7 days * RF3 = ~1 TB on Kafka
+• S3 long-term: ~50GB * 365 = ~18TB/year (with Parquet compression ~3TB/year)
+
+COST OPTIMIZATION:
+• Sampling on the hot path (100% raw, but only 10% into expensive analytics)
+• Tiered Storage in Kafka 3.6+ — old segments go to S3
+• Avoid reading from Kafka for historical queries -> use S3 lake
+• Reserved instances / Savings Plans`,
+    keywords: ["lambda architecture", "flink", "clickhouse", "tiered storage", "sampling"],
+  },
+  {
+    id: 45, level: "lead", topic: "celery",
+    q: "Celery at scale: problems from 1 to 1000 workers. Scaling strategy.",
+    a: `SCALE EVOLUTION:
+
+1-10 WORKERS (toy stage):
+• Single broker (RabbitMQ / Redis)
+• Default settings mostly work
+• Flower for monitoring
+• Main issues: code bugs, not infra
+
+10-100 WORKERS:
+• Problem: result backend becomes a bottleneck
+  -> ignore_result=True where you don't need results
+  -> use Redis with reasonable TTL, not RabbitMQ for results
+• Multiple queues by type of work
+• task_acks_late=True + worker_prefetch_multiplier=1 for long tasks
+• Separate beat scheduler, not mixed into workers
+• Monitoring: Prometheus exporter, Grafana dashboards, p95/p99 latency per task
+
+100-500 WORKERS:
+• Problem: a single RabbitMQ node can't take the load
+  -> RabbitMQ cluster with Quorum Queues
+  -> or sharding: multiple independent brokers
+• Problem: noisy neighbors — one bad task hogs a worker
+  -> strict time limits (soft + hard)
+  -> isolation via queues and dedicated workers
+  -> memory leaks -> worker_max_tasks_per_child
+• Problem: thundering herd on scheduled tasks
+  -> jitter on periodic tasks
+• Use prefork for CPU-bound, gevent/eventlet for I/O-bound
+• Canary deployments — new code on 5% of workers first
+
+500-1000+ WORKERS:
+• Celery starts hitting fundamental limits
+• Problem: broker is the bottleneck no matter the cluster size
+  -> move from pub/sub model to partition-aware (migrate to Kafka + custom consumer)
+• Problem: task inventory becomes huge
+  -> split into multiple apps / services
+• Problem: beat is a single point of failure
+  -> redbeat (Redis-backed beat) with locking, or Kubernetes CronJob
+• Problem: deploys take forever
+  -> progressive rollout, drain workers gracefully (TERM signal, wait for active tasks)
+
+COMMON OPS ISSUES:
+
+• "TASKS SILENTLY LOST":
+  - acks_late=False + worker OOM -> task gone
+  - visibility_timeout (Redis broker) less than task duration -> duplicates
+  - Fix: acks_late=True, reject_on_worker_lost=True
+
+• "QUEUE GROWING INDEFINITELY":
+  - Producer >> consumers -> autoscale workers
+  - Poison tasks blocking a worker -> time limits + DLQ equivalent (failed task retry queue)
+
+• "RANDOM FAILURES":
+  - Connection pool exhaustion -> broker_pool_limit
+  - DNS TTL / stale connections -> broker_connection_retry_on_startup, heartbeat
+
+• "MEMORY KEEPS GROWING":
+  - Python memory fragmentation -> worker_max_tasks_per_child=100-1000
+  - Leaking references in tasks -> forcing child recycle
+
+WHEN TO MIGRATE OFF CELERY:
+• > 1000 workers on a single app
+• Need exactly-once
+• Need complex workflow orchestration -> Temporal, Airflow
+• Need event-sourcing semantics -> Kafka consumers
+• Extreme throughput requirements -> custom consumers on Go/Rust`,
+    keywords: ["max_tasks_per_child", "acks_late", "quorum queues", "temporal", "sharding"],
+  },
+
+  // ============== TRICKY ==============
+  {
+    id: 50, level: "tricky", topic: "kafka",
+    q: "Trick: you have a Kafka topic with 10 partitions and 20 consumers in one group. What happens?",
+    a: `10 consumers will read, 10 will be IDLE.
+
+Rule: a partition can only belong to one consumer in a group. If consumers > partitions, the extras sit idle waiting for rebalancing.
+
+Why this is a trap: many candidates say "load will be distributed across all 20". No — Kafka is fundamentally partition-based.
+
+FOLLOW-UP: "How do you handle this?"
+• Increase partitions (careful — ordering of existing keys changes)
+• Decrease consumers
+• Switch to two groups with different logic
+• Or the problem is architectural: too few partitions for the desired parallelism -> redesign the topic
+
+SECOND TRICK: if you do the reverse (5 consumers, 10 partitions), some consumers will handle 2 partitions each — no idle, but the load may be uneven (if keys are skewed).`,
+    keywords: ["partition assignment", "idle consumer", "skew"],
+  },
+  {
+    id: 51, level: "tricky", topic: "rabbitmq",
+    q: "Trick: you sent a message to an exchange, but there's no queue. What happens?",
+    a: `By default — the MESSAGE IS LOST SILENTLY. No error, no log. The exchange doesn't store messages, it only routes.
+
+How to detect/prevent:
+
+1. MANDATORY FLAG
+   channel.basic_publish(..., mandatory=True)
+   + handler for basic.return
+   -> if the message can't be routed, the broker returns it to the publisher
+
+2. ALTERNATE EXCHANGE
+   Set x-alternate-exchange on the main exchange
+   -> unroutable messages go to a fallback exchange -> to a queue -> alert/analyze
+
+3. PUBLISHER CONFIRMS
+   channel.confirm_delivery()
+   -> broker confirms that the message was accepted (but doesn't guarantee it was routed — that's what mandatory is for)
+
+CLASSIC PRODUCTION STORY: someone deleted a queue "to clean up", and all messages from a critical publisher silently disappeared for a week. Only detected when the consumer called and asked "why are you not sending us anything?". Lesson: mandatory+AE from day one.
+
+ADDITIONAL TRAP:
+• transient (non-durable) exchange + broker restart = exchange gone
+• queue-less exchanges without AE = silent black hole`,
+    keywords: ["mandatory", "alternate exchange", "publisher confirms", "unroutable"],
+  },
+  {
+    id: 52, level: "tricky", topic: "celery",
+    q: "Trick: task is marked SUCCESS but actually didn't do its work. Why?",
+    a: `SEVERAL POSSIBLE CAUSES:
+
+1. TASK RETURNED BEFORE THE WORK COMPLETED
+   Classic case: async code called without await, or thread started in the task but not waited on.
+   @app.task
+   def bad_task():
+       threading.Thread(target=heavy_work).start()
+       return "done"  # task is SUCCESS, but heavy_work may not have finished
+
+2. SILENT EXCEPTION IN AN except Exception: pass
+   @app.task
+   def also_bad():
+       try:
+           critical_operation()
+       except Exception:
+           pass  # swallowed error, task is SUCCESS
+
+3. TRANSACTION ROLLBACK AFTER COMMIT-LOG
+   SQLAlchemy session.commit() was replaced somewhere by rollback(), but result was cached/returned before.
+
+4. IGNORE_RESULT + RETRY
+   Task retried, returned None from retry() call, celery saw "no exception" and marked SUCCESS (edge case, version-dependent).
+
+5. RESULT BACKEND WROTE STALE STATE
+   Race condition: a second execution wrote SUCCESS over a later FAILURE due to out-of-order writes (rare with Redis backend).
+
+6. ACKS_LATE=FALSE + WORKER OOM
+   Message was acked before processing -> on worker crash, Celery thinks task succeeded.
+
+HOW TO CATCH:
+• Structured logging at every step of the task (start / business step / finish)
+• Metrics on what the task actually did (rows_updated, emails_sent), not just "task ran"
+• Reconciliation job — compare "tasks marked success" vs "actual side effects in the DB"
+• task_acks_late=True + task_track_started=True
+• Don't silently catch exceptions. If you catch — log.exception() and re-raise, or explicitly mark the task FAILED (self.update_state(state='FAILURE')).`,
+    keywords: ["acks_late", "silent exception", "threading", "reconciliation"],
+  },
+  {
+    id: 53, level: "tricky", topic: "kafka",
+    q: "Trick: consumer committed an offset but didn't process the message. Data loss. How?",
+    a: `CLASSIC AT-MOST-ONCE TRAP — enable.auto.commit=true.
+
+By default Kafka consumer commits every 5 seconds (auto.commit.interval.ms). The sequence of events:
+1. Consumer polls -> got messages [10, 11, 12, 13, 14]
+2. Auto-commit timer fires -> offset 15 committed
+3. Consumer starts processing message 12 -> CRASH
+4. Consumer restarts -> reads from offset 15 -> messages 12, 13, 14 are LOST
+
+FIX:
+
+1. MANUAL COMMIT AFTER PROCESSING
+   enable.auto.commit=false
+   process(records)
+   consumer.commitSync()
+
+2. COMMIT PER-BATCH, NOT PER-MESSAGE
+   Balance between performance and risk window
+
+3. IDEMPOTENT PROCESSING + AT-LEAST-ONCE
+   Don't fight duplicates, design the system to tolerate them
+
+ANOTHER VARIATION OF THE TRAP:
+• max.poll.interval.ms (default 5 min) exceeded
+• Kafka decides the consumer is dead -> triggers rebalance
+• Another consumer picks up, commits its progress
+• Original consumer eventually finishes processing and tries to commit -> CommitFailedException
+• Sometimes the original's work still succeeded (DB write) but never got committed -> two consumers processed the same message
+
+FIX:
+• Tune max.poll.interval.ms for your processing time
+• Reduce max.poll.records
+• Move heavy work off the poll thread (producer-consumer internal)
+• Check for rebalance listener / handle CommitFailedException gracefully
+
+DEEPER TRICK: even with manual commit, if you use async commitAsync() and the broker responds with an error AFTER you've moved on, the offset silently didn't commit. Always do final commitSync() on shutdown.`,
+    keywords: ["auto.commit", "commitSync", "max.poll.interval", "rebalance", "CommitFailedException"],
+  },
+  {
+    id: 54, level: "tricky", topic: "patterns",
+    q: "Trick: 'we have exactly-once', but duplicates show up in the DB. Who's to blame?",
+    a: `THE PERSON WHO THINKS "KAFKA EOS" == "END-TO-END EOS".
+
+Exactly-once in Kafka only guarantees delivery and offset commits WITHIN KAFKA. As soon as the consumer writes to an external system (DB, HTTP API, another queue without Kafka transactions) — you're back in at-least-once territory.
+
+TYPICAL SEQUENCE LEADING TO DUPLICATES:
+
+1. Consumer reads message from Kafka
+2. Writes to DB (INSERT INTO orders ...)
+3. Commits offset to Kafka
+4. Between steps 2 and 3 — crash
+5. On restart consumer reads from the last committed offset -> processes the same message
+6. Another INSERT -> DUPLICATE IN DB
+
+EVEN WITH TRANSACTIONS: Kafka transactions don't extend into Postgres. Even with isolation.level=read_committed — once you leave the Kafka boundary, guarantees end.
+
+REAL SOLUTIONS:
+
+1. IDEMPOTENT WRITES
+   • INSERT ... ON CONFLICT DO NOTHING (by event_id)
+   • UPSERT with version check
+   • UNIQUE constraint on (source, event_id)
+
+2. INBOX PATTERN
+   BEGIN;
+     SELECT 1 FROM inbox WHERE msg_id = ? FOR UPDATE;
+     INSERT INTO inbox (msg_id) VALUES (?);
+     -- business logic here
+   COMMIT;
+   -- commit Kafka offset
+
+3. TRANSACTIONAL OUTBOX + IDEMPOTENT RECEIVER
+
+4. KAFKA CONNECT + SPECIALIZED SINKS
+   Some connectors (JDBC sink with upsert mode, Iceberg) do exactly-once via idempotent writes
+
+WHO'S TO BLAME: the architect who sold leadership on "Kafka = exactly-once, no problems". The correct phrasing is "effectively-once" and requires work on both ends.
+
+THE HARDEST TRAP: a consumer writes to DB + sends an HTTP request to a third party. On retry DB is idempotent but the HTTP call isn't — the third party charges the card twice. Need idempotency keys on the client side of HTTP too (Stripe-style idempotency-key header).`,
+    keywords: ["effectively-once", "inbox", "upsert", "idempotency key"],
+  },
+  {
+    id: 55, level: "tricky", topic: "rabbitmq",
+    q: "Trick: queue keeps growing, consumers are alive, CPU < 10%. What's happening?",
+    a: `FAVORITE INTERVIEW QUESTION — diagnostic under pressure.
+
+CHECKLIST IN ORDER OF PROBABILITY:
+
+1. PREFETCH TOO LOW + NETWORK LATENCY
+   prefetch=1, RTT to broker = 50ms -> max throughput = 20 msg/sec per consumer, regardless of CPU.
+   -> Increase prefetch_count to 50-200
+
+2. CONSUMERS ARE "ALIVE" BUT BLOCKED
+   • SELECT FOR UPDATE waiting on a DB lock
+   • HTTP request to an external service is hanging (no timeout!)
+   • Deadlock between consumers
+   -> py-spy / strace / GIL profiler to figure out where they're stuck
+   -> Mandatory timeouts on ALL external calls
+
+3. UNACKED MESSAGES ACCUMULATING
+   rabbitmqctl list_queues name messages_ready messages_unacknowledged
+   -> If unacked is large — consumers received messages but don't ack them
+   -> Bug in code: forgot basic_ack, or exception before ack
+
+4. WRONG CONSUMERS ARE CONNECTED
+   In a distributed system a stale replica from a previous deploy is still connected, receiving messages, and silently dropping them
+   -> Check the consumers list in the queue by tag/connection
+
+5. MESSAGE IS REJECTED AND REQUEUED IN A LOOP
+   Poison message: requeued on every nack -> dominates the queue head
+   -> Check x-death headers, set up DLQ, limit requeue
+
+6. EXCHANGE ROUTING IS WRONG
+   Messages are being published to a different queue than consumers are subscribed to. "Dead" queue grows, "live" one is empty
+   -> List bindings, verify routing_keys
+
+7. SINGLE-THREADED CONSUMER IN PREFORK OF ONE WORKER
+   Load averages across many processes hide the fact that one is stuck
+   -> Check active processes individually
+
+8. FLOW CONTROL ON BROKER
+   Broker memory/disk watermark hit -> producer throttled but consumer sees the old backlog
+   -> rabbitmqctl status, check memory/disk alarms
+
+9. CPU LOW BECAUSE CONSUMER IS DE-FACTO IDLE
+   Maybe consumer quietly crashed with an uncaught exception and is looping with a sleep
+   -> supervised logs, health check endpoints
+
+GOLDEN RULE: CPU is never a reliable signal of "the consumer is working". Use metrics of business activity: "messages processed per second by consumer X".`,
+    keywords: ["unacked", "prefetch", "poison message", "flow control", "py-spy"],
+  },
+  {
+    id: 56, level: "tricky", topic: "celery",
+    q: "Trick: same task scheduled in Celery Beat runs twice simultaneously. Why?",
+    a: `CLASSIC DISTRIBUTED CRON PROBLEM.
+
+CAUSES (ranked):
+
+1. TWO BEAT INSTANCES RUNNING
+   Deploy accidentally spun up beat on two pods. Each independently triggers the schedule.
+   -> RULE: exactly ONE beat process per logical app.
+   -> In Kubernetes: Deployment with replicas=1 + rolling update strategy that ensures old is killed before new starts (rare, mostly this is fine), OR StatefulSet with leader election.
+
+2. BEAT RESTART AT THE SCHEDULED MOMENT
+   Beat started -> saw that "task was supposed to run 10 seconds ago" -> fired it. Old task already ran from the previous beat instance.
+   -> Persisted schedule (redbeat, django-celery-beat DB schedule) with proper locking.
+
+3. TASK ITSELF DIDN'T CHECK FOR UNIQUENESS
+   Beat is fine — but the previous run of the same task didn't finish, and beat fires again.
+   -> Distributed lock inside the task:
+
+     @app.task(bind=True)
+     def my_task(self):
+         lock_id = f"lock:{self.name}"
+         with redis.lock(lock_id, timeout=60*10, blocking_timeout=0):
+             do_work()
+
+   -> Or use singleton pattern libraries (celery-singleton).
+
+4. BEAT HAS DUPLICATE ENTRIES IN THE SCHEDULE
+   Same key twice in celerybeat_schedule dict (human error).
+
+5. CLOCK SKEW BETWEEN NODES
+   If you have multiple beats (anti-pattern), clocks differ -> each thinks it's the right time, no coordination.
+
+PROPER ARCHITECTURE:
+• Exactly one beat or use redbeat with Redis-based leader election
+• Every periodic task implements its own idempotency/locking (because you can never fully trust the scheduler)
+• Monitoring: "expected X runs per hour, got Y" — alert on mismatch
+
+DEEPER TRAP: even with one beat, if a task is slow and beat fires it again "backlog catch-up" style (late_enough parameter), you get concurrent instances of the same task. Set CELERYBEAT_MAX_LOOP_INTERVAL and use singleton locking.`,
+    keywords: ["beat", "redbeat", "distributed lock", "singleton", "leader election"],
+  },
+  {
+    id: 57, level: "tricky", topic: "kafka",
+    q: "Trick: Kafka Producer is faster than consumer. What happens at retention=7d?",
+    a: `LAYERED ANSWER — this is actually a trap about what "lag" really means.
+
+WHAT HAPPENS:
+
+• Producer writes at rate Rp
+• Consumer reads at rate Rc < Rp
+• CONSUMER LAG grows linearly: lag(t) = (Rp - Rc) * t
+
+IF LAG < RETENTION (in messages/time):
+• Consumer is behind but catches up eventually (when load drops)
+• Business impact: processing delay (alerts late, analytics stale)
+• Technically everything is fine
+
+IF LAG > RETENTION:
+• Kafka deletes old segments (retention.ms or retention.bytes exceeded)
+• Consumer tries to read offset X, but X has been deleted
+• OffsetOutOfRangeException!
+• Depending on auto.offset.reset:
+   - "latest" (default): consumer jumps to the end -> SKIPS ALL UNREAD MESSAGES -> data loss
+   - "earliest": jumps to the beginning -> re-reads everything, including already processed -> duplicates + potentially loses some
+   - "none": throws exception -> consumer crashes, needs manual intervention
+
+IN OTHER WORDS: with a slow consumer and retention=7d, if lag exceeds 7d you're in silent data-loss or duplicate territory.
+
+SOLUTIONS:
+
+1. SCALE THE CONSUMER
+   • More partitions + more consumers (but more partitions has its own cost)
+   • Async processing inside the consumer (don't block poll thread)
+   • Batching writes to downstream
+
+2. MONITOR THE LAG
+   • Kafka Lag Exporter -> Prometheus -> Alertmanager
+   • Alert BEFORE lag approaches retention, not when it hits
+   • Alert on lag growth rate, not just absolute lag
+
+3. INCREASE RETENTION FOR CRITICAL TOPICS
+   • 30d or more for topics you can't afford to lose
+   • Mind the cost (disk)
+   • Tiered Storage (Kafka 3.6+) -> old segments to S3
+
+4. BACKPRESSURE AT THE SOURCE
+   • Producer should slow down when the downstream is overwhelmed
+   • Not always possible (can you tell customers "write slower"?)
+
+5. DEAD LETTER / OVERFLOW TOPIC
+   • If you can't keep up — route excess to a separate topic with lower SLA
+   • Process later or drop consciously
+
+6. CIRCUIT BREAKER ON CONSUMER
+   • If downstream DB is slow -> back off, not pile up poll batches
+
+KEY INSIGHT: Kafka retention is NOT a safety net for slow consumers — it's a storage limit. Never architect such that your correctness depends on retention being "generous enough".`,
+    keywords: ["consumer lag", "auto.offset.reset", "OffsetOutOfRange", "tiered storage"],
+  },
+  {
+    id: 58, level: "tricky", topic: "patterns",
+    q: "Trick: 'we have a message broker, so we're loosely coupled'. True or false?",
+    a: `FALSE MORE OFTEN THAN TRUE — one of the big myths of microservice architecture.
+
+A broker gives you TEMPORAL decoupling (publisher and consumer don't have to be up at the same time), but it doesn't automatically give you:
+
+1. SCHEMA COUPLING
+   Producer changed the event payload structure -> consumer broke.
+   Broker doesn't help — it happily delivered a message the consumer can't parse.
+   -> Need: Schema Registry, compatibility contracts, versioning.
+
+2. SEMANTIC COUPLING
+   Consumer relies on the ORDER of events, or on an implicit meaning ("if user_signed_up arrives, email must come within 1 second").
+   Broker gave you decoupled transport but your code depends on cross-service behavior.
+   -> "Temporal coupling" reappears at the business-logic layer.
+
+3. DATA MODEL COUPLING
+   Event contains 30 fields from the producer's internal model. Consumer parses 20 of them and builds its own logic. Producer refactors the DB -> event structure changes -> consumer breaks.
+   -> Need: explicit event design, not "dump all the fields of the table" (anti-pattern: "table-as-event").
+
+4. OPERATIONAL COUPLING
+   Producer publishes at rate R. Consumer can only process at rate R/2. Queue grows, alerts fire, on-call for the CONSUMER team gets paged because of the PRODUCER team's release.
+   -> Operational shared fate, even though code is separate.
+
+5. DELIVERY SEMANTIC COUPLING
+   Producer assumes exactly-once. Consumer assumes at-least-once. Mismatch -> production bugs.
+   -> Need: documented SLA on delivery.
+
+6. EVOLUTIONARY COUPLING
+   Want to change consumer's contract -> N producers need to know. Want to add a new event -> consumers need to subscribe.
+   -> Actually, in a big system, event consumers and producers drift apart faster than services with sync APIs, because sync APIs fail loudly.
+
+TRUE DECOUPLING requires:
+• Explicit schemas with compatibility guarantees
+• Documented events as first-class API contracts (like OpenAPI)
+• Consumer-driven contract tests
+• Clear ownership of every topic/queue
+• Monitoring at topic boundary (lag, error rate, DLQ size) as the SLI of the contract
+• Tolerance for unknown fields (consumers ignore new fields, don't crash)
+• Event sourcing discipline: "events are facts, not commands"
+
+PROVOCATIVE STATEMENT (good to throw at the interviewer): "A broker is a shared database for events. And a shared database is the anti-pattern of microservices. Without strict schema governance and contract discipline, a bunch of services talking via Kafka is more coupled than a well-designed monolith."`,
+    keywords: ["coupling", "schema registry", "contract", "event sourcing"],
+  },
+  {
+    id: 59, level: "tricky", topic: "comparison",
+    q: "Trick: 'Let's use Kafka instead of RabbitMQ for task queues'. What will go wrong?",
+    a: `CLASSIC JUNIOR/MIDDLE MISTAKE. Kafka is a BAD task queue. Reasons:
+
+1. ACK MODEL
+   Kafka acks offsets (positions in the log), not individual messages.
+   Kafka: "I confirm I read up to position 42"
+   RabbitMQ: "I confirm message #X specifically, but not #Y"
+
+   Consequence: if you have 100 tasks and task 50 fails while 51-99 succeed, you can't easily "redo only #50". You have to rewind to 50 and re-process 51-99, or skip 50 and retry it elsewhere.
+
+2. NO PER-MESSAGE REDELIVERY
+   In RabbitMQ a nacked message can be redelivered immediately or after TTL.
+   In Kafka redelivery means seeking back the offset — it affects all subsequent messages in the partition.
+   -> Retry patterns in Kafka are complex: retry topics with increasing delays, manual offset management.
+
+3. BLOCKED HEAD-OF-LINE
+   One "stuck" task at the head of a partition blocks everything behind it in that partition.
+   In RabbitMQ with prefetch + multiple consumers, a slow task just delays that one message, others flow around.
+
+4. REBALANCING INSTEAD OF SCALING
+   Add a consumer to a Kafka group -> rebalance, everyone stops for seconds.
+   Add a consumer to a RabbitMQ queue -> just connects, starts eating.
+
+5. NO PRIORITY QUEUES
+   RabbitMQ supports message priorities natively.
+   Kafka — no native priorities. Have to emulate via separate topics + careful polling.
+
+6. NO PER-MESSAGE TTL
+   RabbitMQ: TTL per message or per queue -> DLQ after expiry.
+   Kafka: retention is per-topic, no way to say "this specific event expires in 10 seconds".
+
+7. NO DLQ MECHANISM
+   RabbitMQ: DLX/DLQ is a native feature.
+   Kafka: DLQ is a pattern you implement yourself (publish failures to another topic). Tooling is weaker.
+
+8. DELIVERY CHURN
+   Task queues want low latency per message (milliseconds). Kafka is optimized for batching — linger.ms, fetch.min.bytes. Tuning for low latency hurts throughput and vice versa.
+
+9. OFFSET PER GROUP VS TASK STATE
+   In RabbitMQ each message has independent state (ready/unacked/dead).
+   In Kafka all state of "group progress" is one number per partition.
+   -> Bookkeeping of which tasks succeeded/failed is manual.
+
+10. TOO MUCH RETENTION
+    Task queues typically want "delete after success". Kafka keeps everything for retention period -> wasted space, confusing semantics.
+
+WHEN KAFKA-AS-QUEUE CAN WORK:
+• Event-driven workers where "replay events from offset X" is the recovery model
+• Extreme throughput where per-message ack is the bottleneck
+• Already have Kafka in the stack and don't want to run another system
+• Ordering within partition is a hard business requirement
+
+RIGHT CHOICE in most cases:
+• Task queues -> RabbitMQ / Celery / SQS
+• Event streams -> Kafka
+• Often: BOTH, for different use cases
+
+POSSIBLE COMPROMISE: use Kafka as a log/bus of events, and for task-style work spawn short-lived Celery/worker tasks from those events. Kafka = "what happened", Celery = "what to do about it".`,
+    keywords: ["head-of-line blocking", "offset", "priority queue", "DLQ", "retention"],
+  },
+
+  // ============== REDIS STREAMS ==============
+  {
+    id: 60, level: "trainee", topic: "redis",
+    q: "What are Redis Streams? How do they differ from Redis Pub/Sub?",
+    a: `Redis Streams — an append-only log data structure (added in Redis 5.0), similar to Kafka but lighter.
+
+KEY DIFFERENCES from Redis Pub/Sub:
+
+Pub/Sub:
+• Fire-and-forget: if no subscriber is listening, the message is lost
+• No persistence
+• No acknowledgement
+• Broadcast to all subscribers
+
+Streams:
+• Persisted in memory (+ AOF/RDB if configured)
+• Messages have unique IDs (timestamp-sequence)
+• Support consumer groups (like Kafka)
+• Acknowledgement required (XACK)
+• Messages stay until trimmed
+
+Use Redis Streams when you need a lightweight persistent message log; use Pub/Sub for ephemeral broadcasts like live notifications where missing a message is acceptable.`,
+    keywords: ["streams", "pub/sub", "persistence", "XACK"],
+  },
+  {
+    id: 61, level: "junior", topic: "redis",
+    q: "XADD, XREAD, XREADGROUP — what are they?",
+    a: `XADD — append a message to a stream.
+XADD mystream * field1 value1 field2 value2
+(* = auto-generate ID from timestamp)
+
+XREAD — read messages from a stream, optionally blocking.
+XREAD BLOCK 0 STREAMS mystream $
+($ = "from now on"; 0 = "from beginning")
+
+XREADGROUP — read as part of a consumer group.
+XREADGROUP GROUP mygroup consumer1 COUNT 10 STREAMS mystream >
+(> = "undelivered messages for this group")
+
+OTHER KEY COMMANDS:
+• XACK — acknowledge a message (remove from PEL)
+• XCLAIM — transfer pending messages to another consumer
+• XAUTOCLAIM — Redis 6.2+, safer iterating version of XCLAIM
+• XPENDING — list pending (unacked) messages
+• XLEN — stream length
+• XTRIM — trim stream to size
+
+CONSUMER GROUPS work like Kafka groups: messages are distributed among consumers; each consumer's progress is tracked by the server.`,
+    keywords: ["XADD", "XREAD", "XREADGROUP", "XACK", "consumer group"],
+  },
+  {
+    id: 62, level: "middle", topic: "redis",
+    q: "What is the Pending Entries List (PEL) in Redis Streams? How do you handle it?",
+    a: `PEL (Pending Entries List) — a per-consumer-group list of messages that were delivered via XREADGROUP but NOT yet XACK'd.
+
+If a consumer crashes before acking, the messages stay in the PEL forever until someone claims them. Dangerous: endless PEL growth = memory leak + duplicate processing risk.
+
+DIAGNOSIS:
+XPENDING mystream mygroup
+# shows: count, min/max IDs, consumers breakdown
+XPENDING mystream mygroup - + 10 consumer1
+# detailed view with idle time per message
+
+RECLAIM WORKFLOW:
+1. A consumer (or a dedicated watchdog) checks XPENDING
+2. If idle time > threshold (e.g., 30s) -> XCLAIM or XAUTOCLAIM
+3. XCLAIM mystream mygroup consumer2 30000 <id1> <id2>
+   -> transfers messages to consumer2 with reset idle time
+4. Process + XACK
+
+XAUTOCLAIM (Redis 6.2+) — recommended:
+XAUTOCLAIM mystream mygroup consumer2 30000 0-0 COUNT 100
+# iterates automatically, returns next cursor, safer under load
+
+GOTCHA: XCLAIM increments a delivery counter on each claim. After N attempts, the message is "poison". Route to a DLQ equivalent or drop manually — Redis Streams has no native DLQ.`,
+    keywords: ["PEL", "XPENDING", "XCLAIM", "XAUTOCLAIM", "poison message"],
+  },
+  {
+    id: 63, level: "senior", topic: "redis",
+    q: "Redis Streams vs Kafka — when to choose which?",
+    a: `REDIS STREAMS PROS:
+• Already in your stack if you use Redis — one less system to run
+• Very low latency (sub-ms)
+• Simple ops: single node, or managed (ElastiCache, Upstash)
+• Consumer groups out of the box
+• Good for small-to-medium throughput (up to ~100K msg/sec on a beefy node)
+
+REDIS STREAMS CONS:
+• In-memory first -> data size limited by RAM (unless Redis on Flash)
+• Replication is async -> can lose recent writes on failover
+• No built-in partitioning -> ordering is global; parallelism via multiple streams (manual sharding)
+• Cluster mode: each stream key lives on ONE slot/node, not auto-partitioned
+• No native exactly-once semantics
+• No schema registry ecosystem
+• No native DLQ, no log compaction
+
+KAFKA PROS:
+• Partitioning, replication factor, ISR — industrial-grade
+• Retention in days/weeks/months on disk
+• Rich ecosystem (Connect, Streams, Schema Registry, Flink, Debezium)
+• Exactly-once within Kafka (transactions)
+• Millions of msg/sec
+
+KAFKA CONS:
+• Complex to run (ZK or KRaft, brokers, topic management)
+• Higher latency (tens of ms typical)
+• Overkill for small apps
+
+RULE OF THUMB:
+• < 10k msg/sec, moderate retention, Redis already in stack -> Streams
+• High throughput, long retention, event sourcing, multi-team -> Kafka
+• Task queues -> neither; use RabbitMQ / Celery / SQS
+
+HYBRID IN PRACTICE: Redis Streams as a short-term buffer for bursty ingestion in front of Kafka; or Streams for intra-team microservice events, Kafka as the cross-team bus.`,
+    keywords: ["redis", "kafka", "latency", "partitioning", "retention"],
+  },
+  {
+    id: 64, level: "tricky", topic: "redis",
+    q: "Trick: your Redis Streams consumer crashed mid-processing. You restart and messages are 'missing'. What happened?",
+    a: `Several possibilities — all worth knowing:
+
+1. USED XREAD INSTEAD OF XREADGROUP
+   XREAD with $ -> "give me messages from now on"
+   During the crash, new messages arrived -> consumer didn't see them on restart.
+   -> Fix: use consumer groups (XREADGROUP), or persist last-processed ID yourself.
+
+2. XREADGROUP WITH > BUT NO PEL DRAIN ON RESTART
+   When you read with >, Redis moves messages to the PEL and marks them "delivered".
+   On restart, reading with > again gives only NEW undelivered messages.
+   To resume processing your own pending ones, read with an explicit ID:
+   XREADGROUP GROUP g c1 STREAMS mystream 0
+   (0 = replay messages in MY PEL, not new ones)
+   Many consumers forget this -> "ghost" messages in PEL, no one processes them.
+
+3. STREAM WAS TRIMMED
+   XADD mystream MAXLEN 1000 * ...
+   -> oldest messages dropped when stream exceeds 1000.
+   If your consumer was slow + producer aggressive -> unacked messages in PEL may reference trimmed IDs. Reading them returns error/tombstone.
+
+4. REDIS RESTARTED WITHOUT AOF
+   Default Redis persistence (RDB) snapshots every N seconds/writes.
+   Crash between snapshots -> messages gone, PEL state reset.
+   -> Enable AOF with appendfsync=everysec (trade-off: small perf cost).
+
+5. FAILOVER TO REPLICA WITH LAG
+   Async replication -> replica is missing recent writes.
+   Sentinel/Cluster promotes the replica -> silent data gap.
+   -> No great fix in native Redis for critical data; use Kafka/RabbitMQ Quorum/NATS JetStream instead.
+
+DEFENSE IN DEPTH:
+• AOF with fsync=always for critical streams (slow but safest)
+• Monitor PEL size (XPENDING) and idle times — alert on growth
+• On consumer restart: FIRST drain own PEL (XREADGROUP with ID 0), THEN poll for new
+• Set realistic MAXLEN ~ — don't trim faster than your consumer can drink
+• For true durability requirements -> don't use Streams, use a real broker`,
+    keywords: ["PEL", "AOF", "MAXLEN", "replica lag", "XREADGROUP"],
+  },
+
+  // ============== NATS ==============
+  {
+    id: 70, level: "trainee", topic: "nats",
+    q: "What is NATS and what makes it different?",
+    a: `NATS — a lightweight, high-performance messaging system, originally built at Cloud Foundry. Written in Go, single static binary.
+
+KEY TRAITS:
+• Extremely low latency (microseconds, not milliseconds)
+• Very simple text-based protocol
+• Subject-based routing (hierarchies like orders.us.created)
+• Request/Reply is a first-class primitive
+• Clustering built-in with gossip-style discovery
+• Tiny footprint (single binary, few MB RAM)
+
+TWO FLAVORS:
+• Core NATS — at-most-once, no persistence, pub/sub + request/reply
+• JetStream — persistence layer on top, at-least-once / exactly-once, consumer groups
+
+POSITIONING:
+• Faster and simpler than RabbitMQ
+• Less throughput and smaller ecosystem than Kafka
+• Great for microservice-to-microservice messaging, IoT, edge, service mesh, Kubernetes environments
+• "The Kafka of latency-sensitive, low-complexity stacks"`,
+    keywords: ["NATS", "JetStream", "subject", "latency"],
+  },
+  {
+    id: 71, level: "junior", topic: "nats",
+    q: "What are subjects and wildcards in NATS?",
+    a: `SUBJECT — a hierarchical name (dot-separated) that producers publish to and consumers subscribe to.
+
+Example: orders.us.electronics.created
+
+WILDCARDS (only on the subscriber side):
+• * — matches exactly ONE token
+• > — matches ONE OR MORE tokens (must be last)
+
+EXAMPLES:
+• orders.*.created matches orders.us.created, orders.eu.created; NOT orders.us.electronics.created
+• orders.us.> matches orders.us.anything, including deeply nested paths
+• > subscribes to EVERYTHING (admin/debug only!)
+• *.*.created = two-token prefix + created
+
+DESIGN TIPS:
+• Start broad, narrow as you go: service.entity.action (e.g., orders.user.signed_up)
+• Use consistent naming across teams — NATS doesn't enforce a schema
+• Leading tokens are cheapest to filter on -> put stable/low-cardinality up front
+• Avoid > in high-volume systems unless you really want everything
+
+GOTCHAS:
+• Case-sensitive (orders.Created != orders.created)
+• Max subject length 256 chars by default
+• Certain characters reserved (., *, >, whitespace)`,
+    keywords: ["subject", "wildcard", "hierarchy"],
+  },
+  {
+    id: 72, level: "middle", topic: "nats",
+    q: "Core NATS vs JetStream — key differences?",
+    a: `CORE NATS:
+• At-most-once delivery
+• No persistence — if no subscriber is listening, the message is GONE
+• Fire-and-forget or request/reply
+• Queue groups for load balancing (multiple subscribers, one gets each message)
+• Ideal for: RPC, live events, control plane, "latest value wins" scenarios
+
+JETSTREAM:
+• Built into nats-server (no separate process)
+• At-least-once or exactly-once delivery
+• Persistent streams (file or memory storage)
+• Consumer types: push or pull
+• Configurable retention: limits / interest / work queue
+• Explicit ACKs required
+• Deduplication via Nats-Msg-Id header within a window
+• Ideal for: durable events, event sourcing, task queues, CDC
+
+CONSUMER TYPES:
+• Durable — named, survives restarts, resumes where it left off
+• Ephemeral — created on subscribe, gone when client disconnects
+• Push — server pushes messages to subscriber
+• Pull — subscriber explicitly fetches batches (more like Kafka)
+
+RETENTION POLICIES:
+• Limits — keep N messages / bytes / age (like Kafka)
+• Interest — keep while at least one consumer is interested
+• Work queue — delete once ack'd (like a classic queue)
+
+BONUS: JetStream KV STORE and OBJECT STORE are built on top of streams with log compaction. Useful for configuration, feature flags, small state.`,
+    keywords: ["core NATS", "JetStream", "durable consumer", "retention", "KV store"],
+  },
+  {
+    id: 73, level: "senior", topic: "nats",
+    q: "NATS JetStream delivery guarantees and consumer options — how do they interact?",
+    a: `DELIVERY GUARANTEES:
+
+AT-LEAST-ONCE (default):
+• Publisher gets an ACK from the stream
+• Consumer must explicitly ACK (AckExplicit policy)
+• No ACK within ack_wait -> redelivered
+• Duplicates possible on consumer crash mid-processing
+
+EXACTLY-ONCE (JetStream's version):
+Two mechanisms combined:
+1. Publisher-side deduplication: set Nats-Msg-Id header
+   JetStream deduplicates within duplicate_window (default 2 min)
+   -> prevents duplicates from publisher retry
+2. Consumer-side: double-ack (AckAck)
+   Consumer ACKs; server re-confirms the ACK receipt
+   -> prevents "I ACKed but server didn't record it"
+
+As with Kafka EOS, end-to-end exactly-once still requires idempotent downstream writes. JetStream's guarantee ends at the stream boundary.
+
+KEY CONSUMER OPTIONS:
+
+DeliverPolicy:
+• All (from the start of the stream)
+• New (from now)
+• Last (only most recent message)
+• LastPerSubject (most recent per subject — great for KV-like state recovery)
+• StartSequence / StartTime
+
+AckPolicy:
+• AckExplicit (default, safest)
+• AckAll (acking N also acks everything before it — faster but riskier)
+• AckNone (fire-and-forget, no redelivery)
+
+ReplayPolicy:
+• Instant — drain as fast as possible
+• Original — replay at the original cadence (useful for testing/simulation)
+
+MaxDeliver — max redelivery attempts. After that, message is routed via advisory events (you build a DLQ by subscribing to advisory subjects).
+
+AckWait — how long before the server redelivers if no ACK. Tune for longest legitimate processing time.
+
+GOTCHA: AckAll is a footgun for task queues — one fast ACK on message 100 acks everything back to 1, including still-processing messages.`,
+    keywords: ["exactly-once", "AckExplicit", "Nats-Msg-Id", "AckWait", "MaxDeliver"],
+  },
+  {
+    id: 74, level: "tricky", topic: "nats",
+    q: "Trick: you're using Core NATS. 'At-most-once' — what does that actually mean in production?",
+    a: `"At-most-once" = "0 or 1 deliveries, we don't guarantee which."
+
+WHAT CAN SILENTLY EAT YOUR MESSAGE:
+
+1. NO SUBSCRIBER AT PUBLISH TIME
+   Publish to orders.created; no one is listening -> message dropped. No error, no log.
+   Unlike Kafka (message stays), unlike RabbitMQ with mandatory flag.
+
+2. SLOW CONSUMER DISCONNECTED
+   NATS server has per-client buffers. If a subscriber can't keep up:
+   • Server drops messages for that client
+   • After a threshold, server disconnects the client ("slow consumer" error)
+   • Messages during the window = LOST
+   -> Tune pending_bytes_limit, pending_msgs_limit
+
+3. NETWORK PARTITION
+   Client briefly disconnected -> missed whatever was published during the gap.
+   Client reconnects, but there's no replay in Core NATS.
+
+4. SERVER RESTART
+   Core NATS is stateless -> restart = empty state, nothing in flight survives.
+
+5. QUEUE GROUP ROUND-ROBIN LOSS
+   Subscriber in a queue group receives the message, processes it, crashes before a downstream commit -> no redelivery, no sibling consumer picks up.
+
+WHEN CORE NATS IS STILL THE RIGHT CHOICE:
+
+• RPC / request-reply — you WILL know about failure (timeout on the caller)
+• Telemetry / metrics — losing 0.1% of heartbeats is fine
+• Live dashboards — latest value wins, stale data is worthless anyway
+• Service discovery / control plane — small volume, fast reactions
+• IoT edge — dropping some sensor reads is acceptable
+
+WHEN TO UPGRADE TO JETSTREAM:
+• Any persistent state change
+• Any "we cannot afford to lose this" business event
+• Task queues
+• Any retry-dependent workflow
+• Anything audited
+
+PRODUCTION CHECKLIST for Core NATS:
+• Alert on "slow consumer disconnect" server events
+• Monitor pending bytes/messages per subscription
+• Dashboard both publish rate and consume rate — any divergence = drops
+• Never use Core NATS for billing, orders, or any audit-required flow`,
+    keywords: ["at-most-once", "slow consumer", "queue group", "partition"],
+  },
+
+  // ============== AWS SQS ==============
+  {
+    id: 80, level: "trainee", topic: "sqs",
+    q: "What is AWS SQS? Standard vs FIFO queues?",
+    a: `SQS (Simple Queue Service) — AWS's fully managed message queue. No servers to run, pay per request.
+
+TWO QUEUE TYPES:
+
+STANDARD:
+• Nearly unlimited throughput
+• AT-LEAST-ONCE delivery (duplicates possible)
+• BEST-EFFORT ORDERING (not guaranteed)
+• Good for most workloads where duplicates/order don't matter
+
+FIFO:
+• First-In-First-Out ordering guaranteed (within a message group)
+• "Exactly-once processing" within a dedup window (see caveats in the tricky section)
+• Limited to 300 TPS by default (3000 with batching, 70K with high-throughput mode)
+• Requires MessageGroupId (ordering scope) and optionally MessageDeduplicationId
+• Queue name must end with .fifo
+
+KEY CONCEPTS (both types):
+• Visibility timeout — while a consumer is processing, the message is invisible to others
+• Long polling — wait up to 20s for new messages
+• DLQ — dead-letter queue for failed messages
+• Message retention — 1 min to 14 days (default 4 days)
+• Max message size — 256 KB (use S3 + pointer for larger payloads)
+
+PRICING: ~$0.40 per million requests (Standard). Very cheap for typical loads; FIFO is a bit pricier.`,
+    keywords: ["standard", "FIFO", "visibility timeout", "managed"],
+  },
+  {
+    id: 81, level: "junior", topic: "sqs",
+    q: "What is visibility timeout and why does it matter?",
+    a: `VISIBILITY TIMEOUT — when a consumer receives a message, it is hidden from other consumers for N seconds. If the consumer doesn't delete it within that window, the message becomes visible again and can be re-processed.
+
+DEFAULT: 30 seconds. Max: 12 hours.
+
+Why it exists: SQS doesn't have an explicit "ack" — instead, you must call DeleteMessage after successful processing. If your consumer crashes before deleting, visibility timeout ensures the message comes back.
+
+COMMON PITFALL — TIMEOUT TOO SHORT:
+Processing takes 2 minutes, visibility timeout is 30s:
+1. Consumer A receives message
+2. 30s later, it becomes visible again
+3. Consumer B picks it up
+4. Now TWO consumers are processing the same message simultaneously
+5. Both try DeleteMessage — second one gets a harmless error
+6. -> You have DUPLICATE side effects (double billing, double email, etc.)
+
+FIXES:
+• Set visibility timeout > max expected processing time (safety margin of 2x)
+• OR use ChangeMessageVisibility during processing to extend (heartbeat pattern)
+• Make processing idempotent (always the right call anyway)
+
+CODE PATTERN (heartbeat):
+while still_processing:
+    sqs.change_message_visibility(
+        QueueUrl=url,
+        ReceiptHandle=handle,
+        VisibilityTimeout=60,  # extend by 60s
+    )
+    sleep(30)
+
+TIP: VisibilityTimeout defaults per-queue but can be overridden per-receive-call or per-message. Tune per message type if your queue has mixed workloads with very different processing times.`,
+    keywords: ["visibility timeout", "DeleteMessage", "ChangeMessageVisibility", "heartbeat"],
+  },
+  {
+    id: 82, level: "middle", topic: "sqs",
+    q: "Long polling vs short polling — when to use which?",
+    a: `SHORT POLLING (default when WaitTimeSeconds=0):
+• Returns immediately even if no messages
+• Queries only a subset of SQS servers -> may return empty even when messages exist
+• Each call = 1 API request (costs money)
+• Result: high latency AND high cost when queue is often empty
+
+LONG POLLING (WaitTimeSeconds=1..20):
+• Waits up to 20s for a message to arrive
+• Queries ALL SQS servers -> no false empties
+• Drastically fewer API calls (and bills)
+• Lower latency under sporadic load
+
+WHEN TO USE SHORT POLLING:
+• Almost never in production
+• Only: very high, steady load where the queue is always non-empty anyway
+• Or: one-off scripts where you don't want to block
+
+WHEN TO USE LONG POLLING:
+• 99% of cases
+• Set WaitTimeSeconds=20 on the queue (queue default) OR per-receive
+• Combine with ReceiveMessageWaitTimeSeconds in the queue config
+
+GOTCHAS:
+
+1. CONSUMER COUNT
+If you have N consumers all long-polling, they can all return empty after 20s. For idle queues, you're still paying for empty polls — but rate is bounded (max 1 empty call per 20s per consumer).
+
+2. BATCH SIZE
+Always use MaxNumberOfMessages=10 (max). Reduces cost 10x vs polling one at a time. Processing still happens sequentially in your code.
+
+3. LAMBDA SQS TRIGGER
+Uses its own polling internally (not your code). You only configure batch size and batch window. Lambda does long polling for you.
+
+COST EXAMPLE:
+1 consumer, 24/7, long poll 20s, empty queue:
+~ 24 * 60 * 3 = 4320 calls/day = ~$0.002/day. Negligible.
+Same with short poll (no sleep): millions of calls/day = real money.`,
+    keywords: ["long polling", "short polling", "WaitTimeSeconds", "cost"],
+  },
+  {
+    id: 83, level: "middle", topic: "sqs",
+    q: "SQS vs SNS, and the SNS+SQS fan-out pattern?",
+    a: `SQS = queue (point-to-point, one consumer reads each message).
+SNS = pub/sub topic (broadcast to all subscribers).
+
+SNS:
+• Producer publishes to a topic
+• All subscribers receive the message
+• Subscriber types: SQS queues, Lambda, HTTP endpoints, email, SMS, mobile push
+• No retention, no ordering (unless FIFO topic)
+• If subscriber is down -> message lost (for HTTP/email). For SQS subscribers, SQS handles durability.
+
+SNS + SQS FAN-OUT PATTERN (very common):
+
+Producer -> SNS Topic -> [SQS Queue A, SQS Queue B, SQS Queue C] -> [Consumer A, B, C]
+
+WHY:
+• Each consumer reads at its own pace (SQS buffers for each independently)
+• One slow consumer doesn't slow others
+• Each consumer has its own DLQ
+• Add/remove consumers without changing the producer
+• Replay = move messages from DLQ back to the main queue
+
+CONFIGURATION NOTES:
+• Subscribe each SQS queue to the SNS topic
+• Grant SNS permission to send to each queue (SQS resource policy)
+• Enable RawMessageDelivery on the subscription — otherwise SNS wraps each message in an envelope JSON
+
+ORDERING VARIANT:
+SNS FIFO Topic -> SQS FIFO Queue(s) -> ordered processing per MessageGroupId
+
+ALTERNATIVE: EVENTBRIDGE
+• More routing capabilities (rules, filters, transformations, archive/replay)
+• Up to ~14000 targets per rule
+• Higher latency and cost per event
+• Better for cross-account event choreography
+
+RULE OF THUMB:
+• Two-three consumers, simple broadcast -> SNS+SQS
+• Many consumers, complex routing, schema registry -> EventBridge
+• Single consumer -> just SQS
+• High-throughput stream for analytics -> Kinesis or MSK (Kafka)`,
+    keywords: ["SNS", "fan-out", "EventBridge", "RawMessageDelivery"],
+  },
+  {
+    id: 84, level: "senior", topic: "sqs",
+    q: "SQS FIFO 'exactly-once' — what's the real catch?",
+    a: `AWS markets SQS FIFO as "exactly-once processing". The fine print matters.
+
+WHAT IT ACTUALLY GUARANTEES:
+Within a 5-MINUTE DEDUPLICATION WINDOW, if you send the same message (same MessageDeduplicationId, or same content with content-based dedup), SQS delivers it only once.
+
+Outside that window? The same "duplicate" is treated as a new message.
+
+WHAT "PROCESSING" MEANS HERE:
+SQS deduplicates at INGRESS. It does NOT guarantee that your consumer processes only once. If:
+• Consumer receives the message
+• Processes it (writes to DB)
+• Crashes BEFORE DeleteMessage
+• Visibility timeout expires -> message redelivered
+• Another consumer processes it again -> DUPLICATE PROCESSING
+
+Just like Kafka EOS, SQS "exactly-once" is only within its boundary. The consumer still needs idempotency for real end-to-end guarantees.
+
+OTHER LIMITS:
+
+1. THROUGHPUT
+• Default: 300 msg/sec per FIFO queue (3000 with batching)
+• High-throughput FIFO (opt-in): 70k msg/sec per queue, 700k with batching
+• Still 1000x less than Kafka
+• -> Don't use FIFO for firehoses
+
+2. MESSAGEGROUPID DRIVES ORDERING AND PARALLELISM
+• Within same MessageGroupId -> strict FIFO, processed sequentially
+• Across different groups -> parallel processing
+• Few groups -> low parallelism (even with many consumers)
+• Too many groups -> "FIFO" only within a single entity, not globally
+
+3. DEDUP ID
+• Max 128 chars
+• Same dedup ID within 5 minutes -> rejected
+• Content-based dedup uses SHA-256 of body
+• If you need longer dedup -> do it yourself in DynamoDB/Redis
+
+4. POISON PILLS IN FIFO
+One stuck message in a group blocks the WHOLE group (FIFO ordering).
+• Consumer keeps receiving and failing
+• Eventually MaxReceiveCount -> DLQ
+• Until then, all messages behind it wait
+• -> Configure redrive policy carefully and monitor DLQ size
+
+REAL-WORLD RECOMMENDATION:
+• Use Standard SQS + idempotent consumer for most cases (simpler, cheaper, faster)
+• Use FIFO only when strict ordering is a hard business requirement
+• Design consumer to handle duplicates REGARDLESS of queue type`,
+    keywords: ["FIFO", "MessageGroupId", "dedup window", "throughput"],
+  },
+  {
+    id: 85, level: "tricky", topic: "sqs",
+    q: "Trick: Lambda triggered by SQS — why does my function process the same message multiple times?",
+    a: `SEVERAL COMMON CAUSES — all rooted in "visibility timeout + at-least-once delivery":
+
+1. LAMBDA TIMEOUT > VISIBILITY TIMEOUT
+   • Lambda function timeout: 15 min
+   • Queue visibility timeout: 30s
+   • Lambda is still running at 30s -> SQS makes message visible again -> another Lambda invocation picks it up
+   -> FIX: set queue visibility timeout to AT LEAST 6x the function timeout (AWS's own recommendation)
+
+2. LAMBDA ERRORED OR THREW AN EXCEPTION
+   • Lambda returns failure -> SQS does NOT delete the message
+   • Message becomes visible after visibility timeout -> redelivered
+   • Keeps repeating until MaxReceiveCount -> DLQ
+   -> FIX: catch non-retryable errors; return success for "poison" messages; configure DLQ
+
+3. PARTIAL BATCH FAILURE (HUGE GOTCHA)
+   • Lambda receives a batch of 10 messages
+   • Processes 9 successfully, fails on 1
+   • Lambda returns failure for the whole batch
+   • ALL 10 messages become visible again -> 9 get RE-PROCESSED!
+   -> FIX: Enable "ReportBatchItemFailures" (FunctionResponseTypes)
+     Return only failed message IDs in the response:
+
+     def handler(event, context):
+         failed_ids = []
+         for record in event['Records']:
+             try:
+                 process(record)
+             except Exception:
+                 failed_ids.append({'itemIdentifier': record['messageId']})
+         return {'batchItemFailures': failed_ids}
+
+   SQS will delete the successful ones and retry only failures. This is the #1 under-used SQS+Lambda feature.
+
+4. LAMBDA RESERVED CONCURRENCY TOO LOW
+   • SQS delivers messages faster than Lambda can process
+   • Throttling -> Lambda returns failure -> message redelivered
+   • Creates a retry storm
+   -> FIX: raise reserved concurrency or use MaximumConcurrency on the event source mapping
+
+5. DOWNSTREAM FAILURES (DB, HTTP)
+   • Function fails due to transient issue -> message redelivered -> processed later when downstream is healthy -> now there are DB writes from both attempts
+   -> FIX: idempotent processing using business keys (orderId, eventId)
+
+6. MANUAL DELETE BUG
+   • Code explicitly deletes messages one-by-one
+   • Exception before delete -> redelivery
+   -> FIX: prefer batch response model (above) over manual deletes
+
+GOLDEN RULE: with SQS + Lambda, always assume AT-LEAST-ONCE. Even with FIFO, even with "exactly-once" marketing. Design idempotent consumers — it's cheaper than debugging duplicate charges on a Friday night.`,
+    keywords: ["Lambda", "visibility timeout", "ReportBatchItemFailures", "batchItemFailures", "idempotency"],
+  },
+
+  // ============== BIG COMPARISON ==============
+  {
+    id: 90, level: "lead", topic: "comparison",
+    q: "Choose: RabbitMQ, Kafka, Redis Streams, NATS JetStream, AWS SQS, Google Pub/Sub — decision criteria?",
+    a: `DECISION AXES (in order of how I use them in real reviews):
+
+1. MANAGED OR SELF-HOSTED?
+• Have ops budget -> anything
+• No ops team / small team -> SQS, Pub/Sub, CloudAMQP (managed RabbitMQ), MSK (managed Kafka), Upstash
+• Self-hosted "cheapest to run" -> NATS JetStream (single binary, Go)
+
+2. THROUGHPUT SCALE
+• < 1k msg/sec: anything works
+• 1k-50k: RabbitMQ, Redis Streams, SQS, NATS, Pub/Sub
+• 50k-500k: Kafka, NATS JetStream, Pub/Sub, High-throughput SQS FIFO
+• > 500k: Kafka (mostly), maybe NATS with careful sharding
+
+3. LATENCY REQUIREMENTS
+• Microseconds: Core NATS, Redis Pub/Sub
+• Sub-millisecond: Redis Streams, NATS JetStream
+• Single-digit ms: RabbitMQ
+• Tens of ms: Kafka, SQS, Pub/Sub
+
+4. DURABILITY / RETENTION
+• Ephemeral ok -> Core NATS, Redis Pub/Sub
+• Short (hours): SQS (max 14d), Redis Streams (RAM-limited)
+• Long (days-weeks): RabbitMQ, NATS JetStream
+• Indefinite / replay: Kafka, Pub/Sub (with archive), EventBridge archive
+
+5. ORDERING
+• Global order needed -> Kafka with 1 partition (slow), FIFO queues
+• Per-key order -> Kafka (partition by key), FIFO with MessageGroupId, NATS subject design
+• Don't care -> Standard SQS, RabbitMQ, Core NATS
+
+6. DELIVERY SEMANTICS
+• At-most-once: Core NATS, Redis Pub/Sub
+• At-least-once (most common): everything else
+• Exactly-once-ish: Kafka transactions, SQS FIFO (within dedup window), NATS JetStream (with Msg-Id)
+• True end-to-end EOS: always requires idempotent consumer, regardless of broker
+
+7. ROUTING COMPLEXITY
+• Simple pub/sub -> Kafka, Pub/Sub, SNS
+• Topic patterns + filters -> NATS subjects, RabbitMQ topic exchanges
+• Advanced (headers, transformations, fan-in) -> RabbitMQ, EventBridge
+
+8. ECOSYSTEM / INTEGRATIONS
+• Data pipelines, connectors -> Kafka (Kafka Connect, Debezium, Schema Registry)
+• AWS-native -> SQS/SNS/EventBridge/Kinesis
+• GCP-native -> Pub/Sub
+• Kubernetes-native / service mesh -> NATS
+• Already-have-it -> Redis Streams, RabbitMQ
+
+TYPICAL PICKS I MAKE IN PRACTICE:
+
+• Python backend, background jobs -> Celery + RabbitMQ or SQS
+• Microservices on Kubernetes, low-latency RPC -> NATS Core
+• Microservices with durable events -> NATS JetStream or Kafka
+• Big-data pipeline, analytics -> Kafka + Schema Registry
+• Serverless on AWS -> SQS + Lambda + SNS for fan-out
+• Small team, already on Redis -> Redis Streams (until you outgrow it)
+• Event bus for whole company (100s of services) -> Kafka (schema governance wins)
+
+ANTI-PATTERNS I AVOID:
+• Kafka for simple task queues
+• RabbitMQ for high-retention event log
+• SQS FIFO as a firehose (throughput limits)
+• Redis Streams for "we can't lose a single message" systems
+• Core NATS for anything persistent
+• SNS without SQS (no buffering, no retry for offline consumers)`,
+    keywords: ["decision matrix", "managed", "throughput", "ordering", "ecosystem"],
+  },
+];
