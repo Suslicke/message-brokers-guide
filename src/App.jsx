@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import {
   ChevronDown, ChevronRight, Check, X, Zap, AlertTriangle, Flame,
   Eye, EyeOff, RotateCcw, Filter, Target, Terminal, Download, Upload,
-  Search, Sun, Moon, User, Cookie,
+  Search, Sun, Moon, User, Cookie, Play,
 } from "lucide-react";
 import { LEVELS, TOPICS, QUESTIONS } from "./data.js";
 import { trackEvent, setAnalyticsConsent, setAnalyticsUser } from "./analytics.js";
@@ -53,6 +53,7 @@ export default function App() {
   const [initial] = useState(() => loadState());
 
   const [expandedId, setExpandedId] = useState(null);
+  const [quiz, setQuiz] = useState(null); // { ids, idx, results: {easy,medium,hard} }
   const [completed, setCompleted] = useState(new Set(initial.completed));
   const [bookmarked, setBookmarked] = useState(new Set(initial.bookmarked));
   const [revealed, setRevealed] = useState(new Set(initial.revealed));
@@ -201,13 +202,41 @@ export default function App() {
   }, [completed, confidence]);
 
   // ============== ACTIONS ==============
-  const toggleComplete = useCallback((id) => {
+  const [lastCheckedId, setLastCheckedId] = useState(null);
+
+  const toggleComplete = useCallback((id, shiftKey = false) => {
+    if (shiftKey && lastCheckedId !== null && lastCheckedId !== id) {
+      // Range toggle over the CURRENTLY VISIBLE (filtered) list
+      const orderedIds = filtered.map((q) => q.id);
+      const a = orderedIds.indexOf(lastCheckedId);
+      const b = orderedIds.indexOf(id);
+      if (a !== -1 && b !== -1) {
+        const [from, to] = a < b ? [a, b] : [b, a];
+        const rangeIds = orderedIds.slice(from, to + 1);
+        const target = !completed.has(id); // new state of the clicked item
+        setCompleted((prev) => {
+          const next = new Set(prev);
+          for (const rid of rangeIds) {
+            if (target) next.add(rid);
+            else next.delete(rid);
+          }
+          return next;
+        });
+        setLastCheckedId(id);
+        trackEvent(target ? "questions_checked" : "questions_unchecked", {
+          method: "shift_range",
+          count: rangeIds.length,
+        });
+        return;
+      }
+    }
     setCompleted((prev) => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
       return next;
     });
-  }, []);
+    setLastCheckedId(id);
+  }, [lastCheckedId, completed, filtered]);
 
   const toggleBookmark = useCallback((id) => {
     setBookmarked((prev) => {
@@ -228,6 +257,46 @@ export default function App() {
   const setConf = useCallback((id, level) => {
     setConfidence((prev) => ({ ...prev, [id]: level }));
   }, []);
+
+  // Quiz mode — pick 10 items, prioritizing hard + bookmarked
+  const startQuiz = (size = 10) => {
+    const all = QUESTIONS.map((q) => q.id);
+    const hard = all.filter((id) => confidence[id] === "hard");
+    const booked = all.filter((id) => bookmarked.has(id) && confidence[id] !== "hard");
+    const rest = all.filter((id) => !hard.includes(id) && !booked.includes(id));
+    const shuffle = (a) => {
+      const arr = [...a];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+    const pool = [...shuffle(hard), ...shuffle(booked), ...shuffle(rest)].slice(0, size);
+    if (pool.length === 0) return;
+    setQuiz({ ids: pool, idx: 0, results: { easy: 0, medium: 0, hard: 0 } });
+    trackEvent("quiz_started", { size: pool.length });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const quizAnswer = (rating) => {
+    if (!quiz) return;
+    const currentId = quiz.ids[quiz.idx];
+    setConf(currentId, rating);
+    setQuiz({
+      ...quiz,
+      idx: quiz.idx + 1,
+      results: { ...quiz.results, [rating]: quiz.results[rating] + 1 },
+    });
+    trackEvent("quiz_answer", { rating });
+  };
+
+  const exitQuiz = () => {
+    if (quiz) trackEvent("quiz_exited", { idx: quiz.idx, total: quiz.ids.length });
+    setQuiz(null);
+  };
+
+  const questionById = (id) => QUESTIONS.find((q) => q.id === id);
 
   const resetAll = () => {
     if (window.confirm("Reset all progress? This will clear checks, bookmarks, and ratings.")) {
@@ -313,6 +382,28 @@ export default function App() {
                 {lastSaved ? `saved · ${new Date(lastSaved).toLocaleTimeString()}` : "unsaved"}
               </div>
               <button
+                onClick={() => startQuiz(10)}
+                style={{
+                  background: "transparent",
+                  border: "1px solid var(--accent-blue)",
+                  color: "var(--accent-blue)",
+                  padding: "5px 10px",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
+                  fontSize: "11px",
+                  fontWeight: 600,
+                  letterSpacing: "0.05em",
+                  textTransform: "uppercase",
+                }}
+                aria-label="Start quiz"
+                title="Quiz yourself on 10 random items (weak + bookmarked first)"
+              >
+                <Play size={12} /> Quiz
+              </button>
+              <button
                 onClick={toggleTheme}
                 style={{
                   background: "transparent",
@@ -353,8 +444,248 @@ export default function App() {
           </div>
         </header>
 
+        {/* QUIZ MODE — replaces everything below when active */}
+        {quiz && (() => {
+          const finished = quiz.idx >= quiz.ids.length;
+          if (finished) {
+            const { easy, medium, hard } = quiz.results;
+            const total = quiz.ids.length;
+            return (
+              <div style={{
+                background: "linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-surface-2) 100%)",
+                border: "1px solid var(--accent-blue)",
+                borderLeft: "3px solid var(--accent-blue)",
+                borderRadius: "8px",
+                padding: "28px",
+                marginBottom: "20px",
+              }}>
+                <div style={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontSize: "22px",
+                  fontWeight: 700,
+                  color: "var(--text-primary)",
+                  marginBottom: "8px",
+                }}>
+                  Quiz complete
+                </div>
+                <div style={{ color: "var(--text-muted)", fontSize: "13px", marginBottom: "20px" }}>
+                  You rated {total} question{total === 1 ? "" : "s"}. Ratings are saved. Hit Quiz again to drill on the weak ones.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", marginBottom: "20px" }}>
+                  {[
+                    { k: "easy", v: easy, color: "var(--accent-green)" },
+                    { k: "medium", v: medium, color: "var(--accent-amber)" },
+                    { k: "hard", v: hard, color: "var(--accent-red)" },
+                  ].map((r) => (
+                    <div key={r.k} style={{
+                      background: `color-mix(in srgb, ${r.color} 10%, transparent)`,
+                      border: `1px solid color-mix(in srgb, ${r.color} 30%, transparent)`,
+                      borderRadius: "6px",
+                      padding: "14px",
+                      textAlign: "center",
+                    }}>
+                      <div style={{
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontSize: "32px", fontWeight: 700,
+                        color: r.color, lineHeight: 1,
+                      }}>{r.v}</div>
+                      <div style={{
+                        fontSize: "10px", textTransform: "uppercase",
+                        letterSpacing: "0.1em", color: r.color, marginTop: "6px",
+                      }}>{r.k}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    onClick={() => startQuiz(10)}
+                    style={{
+                      background: "var(--accent-blue)",
+                      color: "var(--bg-app)",
+                      border: "1px solid var(--accent-blue)",
+                      padding: "7px 14px",
+                      borderRadius: "4px",
+                      cursor: "pointer",
+                      fontFamily: "inherit",
+                      fontSize: "12px",
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <Play size={12} /> Another round
+                  </button>
+                  <button
+                    onClick={exitQuiz}
+                    style={{ ...btnStyle, padding: "7px 14px" }}
+                  >
+                    Back to guide
+                  </button>
+                </div>
+              </div>
+            );
+          }
+          const currentId = quiz.ids[quiz.idx];
+          const q = questionById(currentId);
+          if (!q) {
+            return <div>Question {currentId} not found. <button onClick={exitQuiz}>Exit</button></div>;
+          }
+          const lvl = LEVELS[q.level];
+          const isRev = revealed.has(currentId);
+          return (
+            <div style={{
+              background: "var(--bg-surface)",
+              border: "1px solid var(--border-default)",
+              borderLeft: `3px solid ${lvl.color}`,
+              borderRadius: "6px",
+              overflow: "hidden",
+              marginBottom: "20px",
+            }}>
+              {/* Header */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "10px 16px",
+                borderBottom: "1px solid var(--border-default)",
+                flexWrap: "wrap",
+              }}>
+                <span style={{
+                  fontSize: "11px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: "var(--text-muted)",
+                }}>
+                  Quiz · {quiz.idx + 1} / {quiz.ids.length}
+                </span>
+                <span style={{
+                  fontSize: "10px",
+                  color: lvl.color,
+                  padding: "2px 6px",
+                  border: `1px solid ${lvl.color}55`,
+                  borderRadius: "3px",
+                }}>{lvl.label}</span>
+                <span style={{
+                  fontSize: "10px",
+                  color: "var(--text-muted)",
+                  padding: "2px 6px",
+                  border: "1px solid var(--border-default)",
+                  borderRadius: "3px",
+                }}>{TOPICS[q.topic]}</span>
+                <div style={{ marginLeft: "auto", display: "flex", gap: "8px", fontSize: "11px", fontVariantNumeric: "tabular-nums" }}>
+                  <span style={{ color: "var(--accent-green)" }}>{quiz.results.easy}↑</span>
+                  <span style={{ color: "var(--accent-amber)" }}>{quiz.results.medium}~</span>
+                  <span style={{ color: "var(--accent-red)" }}>{quiz.results.hard}↓</span>
+                  <button onClick={exitQuiz} style={{ ...btnStyle, padding: "2px 8px" }}>
+                    <X size={11} /> exit
+                  </button>
+                </div>
+              </div>
+              {/* Progress */}
+              <div style={{ height: "3px", background: "var(--bg-inset)" }}>
+                <div style={{
+                  width: `${(quiz.idx / quiz.ids.length) * 100}%`,
+                  height: "100%",
+                  background: lvl.color,
+                  transition: "width 0.2s",
+                }} />
+              </div>
+              {/* Body */}
+              <div style={{ padding: "24px" }}>
+                <h2 style={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontSize: "18px",
+                  fontWeight: 500,
+                  color: "var(--text-primary)",
+                  lineHeight: 1.5,
+                  margin: "0 0 20px 0",
+                }}>
+                  {q.q}
+                </h2>
+                {!isRev ? (
+                  <div style={{ padding: "20px 0", textAlign: "center" }}>
+                    <button
+                      onClick={() => toggleReveal(currentId)}
+                      style={{
+                        background: "transparent",
+                        border: `1px solid ${lvl.color}`,
+                        color: lvl.color,
+                        padding: "10px 28px",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        letterSpacing: "0.1em",
+                        textTransform: "uppercase",
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "6px",
+                      }}
+                    >
+                      <Eye size={14} /> Reveal answer
+                    </button>
+                    <div style={{ color: "var(--text-muted)", fontSize: "12px", marginTop: "12px" }}>
+                      Think it through first. Then rate how well you knew it.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{
+                      whiteSpace: "pre-wrap",
+                      fontSize: "13.5px",
+                      lineHeight: 1.75,
+                      color: "var(--text-secondary)",
+                      marginBottom: "20px",
+                    }}>
+                      {q.a}
+                    </div>
+                    <div style={{
+                      display: "flex",
+                      gap: "8px",
+                      paddingTop: "16px",
+                      borderTop: "1px solid var(--border-subtle)",
+                      flexWrap: "wrap",
+                    }}>
+                      {["easy", "medium", "hard"].map((c) => {
+                        const cColor = c === "easy" ? "var(--accent-green)" : c === "medium" ? "var(--accent-amber)" : "var(--accent-red)";
+                        return (
+                          <button
+                            key={c}
+                            onClick={() => quizAnswer(c)}
+                            style={{
+                              flex: 1,
+                              minWidth: "100px",
+                              background: `color-mix(in srgb, ${cColor} 15%, transparent)`,
+                              border: `1px solid color-mix(in srgb, ${cColor} 55%, transparent)`,
+                              color: cColor,
+                              padding: "10px 16px",
+                              borderRadius: "4px",
+                              cursor: "pointer",
+                              fontFamily: "inherit",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.1em",
+                            }}
+                          >
+                            {c}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
         {/* INTRO */}
-        {showIntro && (
+        {!quiz && showIntro && (
           <div style={{
             background: "linear-gradient(135deg, var(--bg-surface) 0%, var(--bg-surface-2) 100%)",
             border: "1px solid var(--border-default)",
@@ -385,6 +716,7 @@ export default function App() {
           </div>
         )}
 
+        {!quiz && <>
         {/* STATS */}
         <div style={{
           display: "grid",
@@ -575,24 +907,81 @@ export default function App() {
             </div>
           )}
 
-          {filtered.map((q, idx) => (
-            <QuestionCard
-              key={q.id}
-              q={q}
-              idx={idx}
-              isDone={completed.has(q.id)}
-              isBookmarked={bookmarked.has(q.id)}
-              isExpanded={expandedId === q.id}
-              isRevealed={revealed.has(q.id)}
-              conf={confidence[q.id]}
-              blindMode={blindMode}
-              onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
-              onToggleComplete={() => toggleComplete(q.id)}
-              onToggleBookmark={() => toggleBookmark(q.id)}
-              onToggleReveal={() => toggleReveal(q.id)}
-              onSetConf={(c) => setConf(q.id, c)}
-            />
-          ))}
+          {filtered.map((q, idx) => {
+            const prevLevel = idx > 0 ? filtered[idx - 1].level : null;
+            const isNewLevelGroup = q.level !== prevLevel;
+            const lvl = LEVELS[q.level];
+            // Count items in this level group
+            const levelItems = filtered.filter((x) => x.level === q.level);
+            const levelDone = levelItems.filter((x) => completed.has(x.id)).length;
+            return (
+              <div key={q.id} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                {isNewLevelGroup && (
+                  <div style={{
+                    marginTop: idx === 0 ? 0 : "16px",
+                    padding: "10px 14px",
+                    background: `color-mix(in srgb, ${lvl.color} 8%, transparent)`,
+                    border: `1px solid color-mix(in srgb, ${lvl.color} 30%, transparent)`,
+                    borderLeft: `3px solid ${lvl.color}`,
+                    borderRadius: "6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "12px",
+                    flexWrap: "wrap",
+                  }}>
+                    <span style={{
+                      color: lvl.color,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      fontSize: "15px",
+                      fontWeight: 700,
+                      letterSpacing: "0.08em",
+                    }}>
+                      {lvl.label}
+                    </span>
+                    <span style={{
+                      color: "var(--text-muted)",
+                      fontSize: "11px",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.1em",
+                    }}>
+                      {levelItems.length} questions · {levelDone}/{levelItems.length} done
+                    </span>
+                    <div style={{
+                      flex: 1,
+                      minWidth: "80px",
+                      height: "4px",
+                      background: "var(--bg-inset)",
+                      borderRadius: "2px",
+                      overflow: "hidden",
+                      marginLeft: "auto",
+                    }}>
+                      <div style={{
+                        width: `${levelItems.length ? (levelDone / levelItems.length) * 100 : 0}%`,
+                        height: "100%",
+                        background: lvl.color,
+                        transition: "width 0.2s",
+                      }} />
+                    </div>
+                  </div>
+                )}
+                <QuestionCard
+                  q={q}
+                  idx={idx}
+                  isDone={completed.has(q.id)}
+                  isBookmarked={bookmarked.has(q.id)}
+                  isExpanded={expandedId === q.id}
+                  isRevealed={revealed.has(q.id)}
+                  conf={confidence[q.id]}
+                  blindMode={blindMode}
+                  onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
+                  onToggleComplete={(e) => toggleComplete(q.id, e?.shiftKey)}
+                  onToggleBookmark={() => toggleBookmark(q.id)}
+                  onToggleReveal={() => toggleReveal(q.id)}
+                  onSetConf={(c) => setConf(q.id, c)}
+                />
+              </div>
+            );
+          })}
         </div>
 
         {/* FINAL TIPS */}
@@ -619,6 +1008,7 @@ export default function App() {
             <li style={{ color: "var(--accent-red)" }}>Sleep. Don't cram for 12 hours. 7h of sleep &gt; 2 more questions memorized.</li>
           </ul>
         </div>
+        </>}
 
         <footer style={{
           marginTop: "24px",
@@ -770,7 +1160,8 @@ function QuestionCard({
         </div>
 
         <button
-          onClick={(e) => { e.stopPropagation(); onToggleComplete(); }}
+          onClick={(e) => { e.stopPropagation(); onToggleComplete(e); }}
+          title={isDone ? "Mark as not done (Shift+click for range)" : "Mark as done (Shift+click for range)"}
           style={{
             background: isDone ? lvl.color : "transparent",
             border: `1.5px solid ${isDone ? lvl.color : "var(--text-faint)"}`,
