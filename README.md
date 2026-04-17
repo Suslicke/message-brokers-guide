@@ -5,12 +5,15 @@
 **Interactive interview prep for senior backend roles — RabbitMQ, Kafka, Celery, SQS, NATS.**
 **Trainee → Junior → Middle → Senior → Lead + the tricky gotchas.**
 
-[![Status](https://img.shields.io/badge/status-production-22c55e?style=for-the-badge)]()
+[![Live site](https://img.shields.io/badge/live-message--brokers.suslicke.com-58a6ff?style=for-the-badge)](https://message-brokers.suslicke.com/)
+[![Status](https://img.shields.io/badge/status-production-22c55e?style=for-the-badge)](https://message-brokers.suslicke.com/)
 [![React](https://img.shields.io/badge/React-18-61dafb?style=for-the-badge&logo=react&logoColor=white)](https://react.dev/)
 [![Vite](https://img.shields.io/badge/Vite-7-646cff?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev/)
 [![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-f38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com/)
-[![Questions](https://img.shields.io/badge/questions-69-blue?style=for-the-badge)]()
+[![Questions](https://img.shields.io/badge/questions-75-blue?style=for-the-badge)]()
 [![Levels](https://img.shields.io/badge/levels-trainee→lead-purple?style=for-the-badge)]()
+
+**→ [message-brokers.suslicke.com](https://message-brokers.suslicke.com/) ←**
 
 </div>
 
@@ -18,7 +21,9 @@
 
 ## 📚 What's inside
 
-**69 curated interview questions** across RabbitMQ, Kafka, Celery, Redis Streams, NATS, and AWS SQS — plus distributed-messaging patterns (Saga, Outbox, Idempotency, Back-pressure, Circuit Breaker). Every answer is hand-written with what interviewers actually want to hear and the production trade-offs you need to verbalize.
+**75 curated interview questions** across RabbitMQ, Kafka, Celery, Redis Streams, NATS, and AWS SQS — plus distributed-messaging patterns (Saga, Outbox, Idempotency, Back-pressure, Circuit Breaker). Every answer is hand-written with what interviewers actually want to hear and the production trade-offs you need to verbalize.
+
+Includes side-by-side **✅ Good vs ❌ Bad** breakdowns of real production scenarios (payments, email pipelines, order fulfillment sagas) with the specific failure modes each pattern prevents.
 
 <table>
 <tr>
@@ -29,28 +34,30 @@
 - 9 topics across the whole messaging stack
 - **Decision matrix**: which broker to pick, in 60 seconds
 - Real production patterns (Outbox, Saga, DLQ, idempotency)
-- ✅ Good vs ❌ Bad consumer design
+- ✅ Good vs ❌ Bad production stories for payments, email, fulfillment
 
 </td>
 <td width="33%" valign="top">
 
 ### ⚡ Built for speed
-- 🔍 Full-text search across Q + A + keywords
-- ⌨️ Global shortcuts: `/` and `⌘K` focus search, `Esc` to clear
-- 🏷️ Filter by level / topic
-- 🙈 Blind mode — hide answers to force yourself to think
-- 📝 Confidence rating (easy / medium / hard) per question
+- 🔍 Instant full-text search with live match highlighting
+- 💡 Autocomplete suggestions under the search input
+- ⌨️ Global shortcuts: `/` and `⌘K` focus search, `Esc` clears, ↑/↓/Enter navigate
+- 🏷️ Clickable `#keyword` tags — filter the whole list by any tag
+- 📂 Collapsible level group headers — fold entire sections you're done with
 
 </td>
 <td width="33%" valign="top">
 
 ### 📊 Track your progress
-- ✅ Checkbox progress — auto-saved to `localStorage`
-- ⚑ Bookmark for pre-interview review
-- 📥 Export/import progress as JSON
+- ✅ Checkbox + **Shift+click** range selection
+- 🎯 Rating filter chips: Bookmarked / Hard / Medium / Easy / Unrated (live counts)
+- 🙈 Blind mode — hide answers, reveal one at a time
+- 📝 Confidence rating (easy / medium / hard) per question
+- ⚑ Bookmarks for pre-interview review
+- 🧪 **Quiz mode** — random 10-item drill, prioritizes weak + bookmarked
+- 📥 Export / Import progress as JSON
 - 🎨 Light / Dark theme toggle
-- 🙋 Optional username — per-user stats in analytics
-- 🔐 Consent-first analytics (Mode v2, denied by default)
 
 </td>
 </tr>
@@ -58,16 +65,22 @@
 
 ---
 
-## 🎨 Features
+## 🎨 Features in detail
 
 | Feature | Details |
 |---|---|
 | 🌓 **Theme toggle** | Dark terminal vibe by default, one-click switch to light. Persists in `localStorage` |
-| 🔍 **Search** | Instant match across question text, answer body, and keywords. Live match counter |
-| 🙈 **Blind mode** | Hide answers; reveal one at a time. Force yourself to actually think |
-| 📊 **Progress by level** | Progress bars per level; "confident" / "needs work" counts at a glance |
-| 📥 **Export / Import** | Download your progress as JSON; load it back on another device |
-| 🙋 **Username** | Optional — attached to GA events as `user_id` so you can see your own stats |
+| 🔍 **Search** | Instant substring match across question text, answer body, and keywords. Matched fragments are highlighted in place |
+| 💡 **Search suggestions** | Up to 8 results appear under the input as you type. ↑/↓ navigate, Enter opens + scrolls to the picked question |
+| 🏷️ **Tag filtering** | Every `#keyword` under an answer is a clickable pill. Click to filter the list to that tag; click again (or the dismiss × on the active tag chip) to clear |
+| 🎯 **Rating / bookmark filter chips** | Row of chips with live counts: All · Bookmarked · Hard · Medium · Easy · Unrated. Combines with search + level + topic |
+| 📂 **Collapsible level groups** | Big group headers (TRAINEE · 8 questions · 0/8 done) click to fold an entire level |
+| 🙈 **Blind mode** | Hide answers; reveal each one deliberately. Force active recall |
+| 🧪 **Quiz mode** | 10-item random drill. Pool prioritizes hard-rated first, then bookmarked, then random. Q → Reveal → rate easy/medium/hard → next. Summary card at the end |
+| ⚡ **Shift+click range** | Toggle a run of checkboxes at once. Direction mirrors the new state of the target click (Gmail/Finder style) |
+| 📊 **Progress by level** | Stat cards at the top, progress bars per level on the group headers, "confident / needs work" counters |
+| 📥 **Export / Import** | Download full progress as JSON, load it back on another device |
+| 🙋 **Username** | Optional — attached to GA events as `user_id` so you can see your own stats in reports |
 | 🧠 **Consent-first analytics** | Google Analytics with Consent Mode v2, denied by default. IP anonymized |
 | 🚀 **Zero backend** | Pure static SPA. Deploys to Cloudflare Workers with one command |
 
@@ -76,22 +89,23 @@
 ## 🧩 What's covered
 
 <details>
-<summary><b>Click to expand — 9 topics across 69 questions</b></summary>
+<summary><b>Click to expand — 9 topics across 75 questions</b></summary>
 
 | Topic | Focus |
 |---|---|
 | **Message Broker Concepts** | Pub/sub vs point-to-point, sync vs async, producer/consumer/queue vocabulary |
 | **RabbitMQ** | Exchanges, bindings, DLX, confirms, mirrored vs quorum queues |
-| **Kafka** | Partitions, offsets, consumer groups, compaction, Schema Registry, hot partitions |
+| **Kafka** | Partitions, offsets, consumer groups, compaction, Schema Registry, hot partitions, replay |
 | **Celery** | Task routing, retries, ETA, rate limits, result backends, chord/chain |
 | **Redis Streams** | Consumer groups, `XADD`/`XREADGROUP`, pending entries list, vs pub/sub |
 | **NATS** | Core vs JetStream, subject hierarchy, durable consumers, deduplication |
 | **AWS SQS** | Standard vs FIFO, visibility timeout, long polling, SNS fan-out |
-| **Broker Comparison** | Decision matrix, when to pick which, ordering guarantees across brokers |
+| **Broker Comparison** | Decision matrix, scenario picks, ordering guarantees across brokers |
 | **Patterns & Architecture** | Saga, Outbox, idempotency keys, poison messages, back-pressure, exactly-once truth |
 
 ### Sample of high-value questions
 
+**Core patterns**
 - Broker decision matrix — pick one in 60 seconds
 - Exactly-once delivery — truth, myth, and what actually works
 - Poison messages — handle them without taking down the queue
@@ -101,8 +115,18 @@
 - Mirrored vs Quorum queues — which to choose in 2026
 - Back-pressure — what happens when consumers can't keep up
 - Message ordering guarantees — per broker, per scope
-- ✅ Good vs ❌ Bad — designing the consumer
 - Transactional Outbox — publishing events reliably after a DB commit
+
+**Friendly scenario picks**
+- Scenario: "User signs up → 5 services need to react" — which broker?
+- Scenario: "100k image uploads/day → resize + thumbnail + OCR" — how to shape it?
+- Scenario: "We need to replay 7 days of events after a bug fix" — which broker?
+
+**Real production breakdowns (✅ Good vs ❌ Bad)**
+- Payments — naive inline Stripe call vs idempotency-key + outbox (Stripe/Uber/Shopify pattern)
+- Email notifications — blocking SMTP vs decoupled worker + DLQ + per-user rate limit
+- Order fulfillment saga — nested try/except rollback vs event-driven choreography with compensations
+- Designing the consumer — what survives production vs what dies on Monday
 
 </details>
 
@@ -111,8 +135,8 @@
 ## 🖥️ Local development
 
 ```bash
-git clone https://github.com/Suslicke/message-broker-interview-prep.git
-cd message-broker-interview-prep
+git clone https://github.com/Suslicke/message-brokers-guide.git
+cd message-brokers-guide
 npm install
 npm run dev
 ```
@@ -140,10 +164,11 @@ First time: `npx wrangler login` to authenticate.
 
 ## 🎯 How to use this tool
 
-1. **Day 1 — pass-through.** Go through all questions with answers visible. Rate confidence honestly.
+1. **Day 1 — pass-through.** Go through all questions with answers visible. Rate confidence honestly (easy/medium/hard).
 2. **Day 2 — blind mode.** Hide answers. Try to produce the answer in your head, then reveal. Re-rate confidence.
-3. **Day 3 — focus on hard + bookmarked.** Filter to only `hard` ratings + bookmarks. Drill those.
-4. **1 hour before interview.** Look only at bookmarks and the decision matrix. Deep breath. You've got this.
+3. **Day 3 — quiz mode.** Hit the Quiz button in the header. 10 random items, prioritizing weak + bookmarked. Rate each, repeat until the summary shows mostly Easy.
+4. **Day 4 — filter to Hard.** Click the Hard chip at the top. Drill only the ones you still don't know cold.
+5. **1 hour before interview.** Click Bookmarked. Scan. Deep breath. You've got this.
 
 ### Shortcuts
 
@@ -151,7 +176,10 @@ First time: `npx wrangler login` to authenticate.
 |---|---|
 | `/` | Focus the search input |
 | `⌘K` / `Ctrl+K` | Focus the search input |
-| `Esc` | Clear search (or blur if already empty) |
+| `↑` / `↓` | Navigate search suggestions |
+| `Enter` | Open the selected suggestion |
+| `Esc` | Clear the search (or blur) |
+| `Shift+click` on checkbox | Toggle a whole range |
 
 ---
 
@@ -185,8 +213,8 @@ The progress is under localStorage key `interview-prep:v1`. Use the **export** b
 ```
 .
 ├── src/
-│   ├── App.jsx        # main component, state, search, theme, consent
-│   ├── data.js        # all questions + LEVELS + TOPICS config
+│   ├── App.jsx        # main component, state, search, theme, consent, quiz
+│   ├── data.js        # all 75 questions + LEVELS + TOPICS config
 │   ├── analytics.js   # gtag loader + trackEvent / setAnalyticsUser helpers
 │   ├── main.jsx       # React entry + theme init (before render)
 │   └── index.css      # CSS variables for dark/light, font imports
@@ -204,7 +232,7 @@ The progress is under localStorage key `interview-prep:v1`. Use the **export** b
 
 Found a mistake? Want to add a topic? Open an issue or a pull request.
 
-Questions live in [`src/data.js`](src/data.js) as a flat array of `{ id, level, topic, q, a, keywords }`. Add a new one at the bottom with a unique `id`.
+Questions live in [`src/data.js`](src/data.js) as a flat array of `{ id, level, topic, q, a, keywords }`. Add a new one at the bottom with a unique `id`. The `keywords` array becomes clickable `#tag` filters in the UI, so pick them thoughtfully.
 
 ---
 
