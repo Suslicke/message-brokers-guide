@@ -56,6 +56,8 @@ export default function App() {
   const [quiz, setQuiz] = useState(null); // { ids, idx, results: {easy,medium,hard} }
   const [ratingFilter, setRatingFilter] = useState("all"); // all|bookmarked|easy|medium|hard|unrated
   const [collapsedLevels, setCollapsedLevels] = useState(() => new Set()); // Set of level keys that are collapsed
+  const [suggestFocused, setSuggestFocused] = useState(false);
+  const [suggestIdx, setSuggestIdx] = useState(-1);
   const [completed, setCompleted] = useState(new Set(initial.completed));
   const [bookmarked, setBookmarked] = useState(new Set(initial.bookmarked));
   const [revealed, setRevealed] = useState(new Set(initial.revealed));
@@ -779,9 +781,35 @@ export default function App() {
             ref={searchRef}
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setSuggestIdx(-1); }}
+            onFocus={() => setSuggestFocused(true)}
+            onBlur={() => setTimeout(() => setSuggestFocused(false), 150)}
+            onKeyDown={(e) => {
+              const suggestions = query.trim() ? filtered.slice(0, 8) : [];
+              if (suggestions.length === 0) return;
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSuggestIdx((i) => Math.min(suggestions.length - 1, i + 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSuggestIdx((i) => Math.max(-1, i - 1));
+              } else if (e.key === "Enter") {
+                e.preventDefault();
+                const pick = suggestions[Math.max(0, suggestIdx)];
+                if (pick) {
+                  setExpandedId(pick.id);
+                  setSuggestFocused(false);
+                  searchRef.current?.blur();
+                  setTimeout(() => {
+                    document.getElementById(`q-${pick.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 50);
+                  trackEvent("suggestion_picked", { id: pick.id });
+                }
+              }
+            }}
             placeholder="Search questions, answers, keywords…"
             aria-label="Search"
+            aria-autocomplete="list"
             style={{
               width: "100%",
               background: "var(--bg-surface)",
@@ -828,6 +856,108 @@ export default function App() {
               </span>
             )}
           </div>
+          {/* SUGGESTIONS DROPDOWN */}
+          {suggestFocused && query.trim() && filtered.length > 0 && (() => {
+            const suggestions = filtered.slice(0, 8);
+            return (
+              <div
+                role="listbox"
+                style={{
+                  position: "absolute",
+                  top: "calc(100% + 4px)",
+                  left: 0,
+                  right: 0,
+                  background: "var(--bg-surface)",
+                  border: "1px solid var(--border-default)",
+                  borderRadius: "6px",
+                  boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
+                  overflow: "hidden",
+                  zIndex: 30,
+                  maxHeight: "360px",
+                  overflowY: "auto",
+                }}
+              >
+                <div style={{
+                  padding: "6px 12px",
+                  fontSize: "10px",
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: "var(--text-muted)",
+                  borderBottom: "1px solid var(--border-subtle)",
+                  background: "var(--bg-inset)",
+                }}>
+                  {filtered.length} match{filtered.length === 1 ? "" : "es"} · ↑↓ to navigate · Enter to open
+                </div>
+                {suggestions.map((sq, i) => {
+                  const lvl = LEVELS[sq.level];
+                  const active = suggestIdx === i;
+                  return (
+                    <button
+                      key={sq.id}
+                      role="option"
+                      aria-selected={active}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setExpandedId(sq.id);
+                        setSuggestFocused(false);
+                        searchRef.current?.blur();
+                        setTimeout(() => {
+                          document.getElementById(`q-${sq.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }, 50);
+                        trackEvent("suggestion_picked", { id: sq.id });
+                      }}
+                      onMouseEnter={() => setSuggestIdx(i)}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: "10px",
+                        padding: "10px 12px",
+                        background: active ? "color-mix(in srgb, var(--accent-blue) 12%, transparent)" : "transparent",
+                        border: "none",
+                        borderLeft: `2px solid ${active ? lvl.color : "transparent"}`,
+                        cursor: "pointer",
+                        width: "100%",
+                        textAlign: "left",
+                        fontFamily: "inherit",
+                        borderBottom: "1px solid var(--border-subtle)",
+                      }}
+                    >
+                      <span style={{
+                        fontSize: "9px",
+                        fontWeight: 700,
+                        letterSpacing: "0.1em",
+                        color: lvl.color,
+                        padding: "2px 5px",
+                        border: `1px solid color-mix(in srgb, ${lvl.color} 40%, transparent)`,
+                        borderRadius: "3px",
+                        background: `color-mix(in srgb, ${lvl.color} 10%, transparent)`,
+                        flexShrink: 0,
+                        marginTop: "1px",
+                      }}>{lvl.label}</span>
+                      <span style={{
+                        color: "var(--text-primary)",
+                        fontSize: "13px",
+                        lineHeight: 1.4,
+                        flex: 1,
+                        minWidth: 0,
+                      }}>
+                        {highlight(sq.q, query)}
+                      </span>
+                      <span style={{
+                        color: "var(--text-faint)",
+                        fontSize: "10px",
+                        textTransform: "uppercase",
+                        letterSpacing: "0.05em",
+                        flexShrink: 0,
+                      }}>
+                        {TOPICS[sq.topic]}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </div>
 
         {/* CONTROLS */}
@@ -1097,6 +1227,7 @@ export default function App() {
                     isRevealed={revealed.has(q.id)}
                     conf={confidence[q.id]}
                     blindMode={blindMode}
+                    searchQuery={query}
                     onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
                     onToggleComplete={(e) => toggleComplete(q.id, e?.shiftKey)}
                     onToggleBookmark={() => toggleBookmark(q.id)}
@@ -1248,22 +1379,54 @@ export default function App() {
   );
 }
 
+// ============== HIGHLIGHT HELPER ==============
+// Case-insensitive substring highlight. Uses indexOf (no regex) so user
+// input never needs escaping. Preserves original casing.
+function highlight(text, needle) {
+  const n = (needle || "").trim();
+  if (!n) return text;
+  const lower = text.toLowerCase();
+  const low = n.toLowerCase();
+  const parts = [];
+  let i = 0;
+  let key = 0;
+  while (i < text.length) {
+    const hit = lower.indexOf(low, i);
+    if (hit === -1) { parts.push(text.slice(i)); break; }
+    if (hit > i) parts.push(text.slice(i, hit));
+    parts.push(
+      <mark
+        key={key++}
+        className="search-hit"
+        style={{ background: "color-mix(in srgb, var(--accent-blue) 28%, transparent)", color: "inherit", padding: "0 2px", borderRadius: "2px" }}
+      >
+        {text.slice(hit, hit + n.length)}
+      </mark>
+    );
+    i = hit + n.length;
+  }
+  return parts;
+}
+
 // ============== QUESTION CARD ==============
 function QuestionCard({
   q, idx, isDone, isBookmarked, isExpanded, isRevealed, conf, blindMode,
   onToggleExpand, onToggleComplete, onToggleBookmark, onToggleReveal, onSetConf,
+  searchQuery,
 }) {
   const lvl = LEVELS[q.level];
   const showAnswer = !blindMode || isRevealed;
 
   return (
     <div
+      id={`q-${q.id}`}
       className="card-enter"
       style={{
         background: "var(--bg-surface)",
         border: `1px solid ${isExpanded ? lvl.color + "66" : "var(--border-default)"}`,
         borderLeft: `3px solid ${lvl.color}`,
         borderRadius: "6px",
+        scrollMarginTop: "80px",
         overflow: "hidden",
         opacity: isDone ? 0.6 : 1,
         transition: "all 0.2s",
@@ -1342,7 +1505,7 @@ function QuestionCard({
             textDecoration: isDone ? "line-through" : "none",
             textDecorationColor: "var(--text-faint)",
           }}>
-            {q.q}
+            {highlight(q.q, searchQuery)}
           </div>
         </div>
 
@@ -1401,7 +1564,7 @@ function QuestionCard({
                 color: "var(--text-secondary)",
                 padding: "12px 0",
               }}>
-                {q.a}
+                {highlight(q.a, searchQuery)}
               </div>
 
               {q.keywords && (
