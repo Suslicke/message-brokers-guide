@@ -533,13 +533,39 @@ COMMON HYBRIDS (real systems you'll see):
 • Redis Streams alone: small team, Redis already in stack. Works until you outgrow throughput or retention needs.
 
 ─────────────────────────────
+OPERATIONAL FAMILIARITY IS A LEGITIMATE TIEBREAKER:
+
+A point juniors miss and seniors respect: the best broker on paper can lose to the broker your team already operates well. Running a message broker in production means:
+• 3 a.m. incident triage — someone has to remember the flags, the error codes, the failure modes.
+• 6 months of "first encounter" pain with a new broker — backups, upgrades, rebalancing, network partitions you've never debugged before.
+• Mature runbooks, alerts, dashboards, capacity models, on-call rotation, dev tooling — all of that takes years to build.
+
+So the HONEST senior answer often sounds like:
+
+   "Kafka would technically be a better fit for X because of replay / throughput.
+    But our team has 5 years on RabbitMQ, mature runbooks, and alerting.
+    The TOTAL COST of bringing in Kafka is real — training, 24/7 familiarity,
+    migration, extra infra. I'd still pick RabbitMQ here and revisit in a
+    year if we hit the throughput or replay ceilings."
+
+This shows you evaluate **total cost of ownership**, not just technical fit. The inverse also applies — if the team runs Kafka daily and someone proposes RabbitMQ "because it's simpler", pushing back is legitimate.
+
+When operational familiarity is NOT a valid excuse:
+• The fit is truly wrong (using RabbitMQ as an event store → it will break).
+• The workload is 10x beyond what the familiar broker can handle.
+• The gap is small and the team is willing to invest in training.
+
+Rule of thumb: pick familiar UNLESS the familiar tool is structurally wrong for the problem.
+
+─────────────────────────────
 WHAT INTERVIEWERS LISTEN FOR:
 
 1. You name TWO options and pick based on tradeoffs.
 2. You acknowledge what you're giving up (Kafka = ops complexity; RabbitMQ = no replay).
 3. You don't default to Kafka for everything — that's the senior red flag.
 4. You mention replay / retention as the decisive question for event-driven systems.
-5. You know that Celery isn't a broker — it's a task-queue framework.`,
+5. You know that Celery isn't a broker — it's a task-queue framework.
+6. You treat operational familiarity as a real engineering input, not as laziness.`,
     keywords: ["decision matrix", "use case", "hybrid", "anti-pattern", "rabbitmq-vs-kafka", "event-driven"],
   },
   {
