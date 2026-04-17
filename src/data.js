@@ -669,8 +669,73 @@ MONITORING:
 • RequestHandlerAvgIdlePercent (> 30%)
 • NetworkProcessorAvgIdlePercent
 • Consumer lag
-• p99 produce/fetch latency`,
-    keywords: ["sizing", "partitions", "batching", "compression", "page cache", "KRaft"],
+• p99 produce/fetch latency
+
+─────────────────────────────
+RECOMMENDED TECH STACK (the "what would you actually pick?" part):
+
+The question was: "Architecture for 1M events/sec?" — here's the concrete stack you'd propose on a whiteboard.
+
+BROKER:
+• Kafka (open-source Apache, or Confluent Platform if you want Schema Registry + Connect + KSQL with enterprise support).
+• Managed option: Confluent Cloud or AWS MSK — you trade cost for not hiring 2 dedicated Kafka SREs.
+• KRaft mode (ZooKeeper-less) for any new 2025+ cluster. ZooKeeper is officially deprecated since Kafka 3.5.
+• Alternative only if you're allergic to Kafka ops: Redpanda (Kafka API, written in C++, no JVM, single binary, roughly half the hardware for the same throughput). Viable; less ecosystem.
+
+SCHEMA:
+• Confluent Schema Registry (or Apicurio, fully OSS) + Avro or Protobuf.
+• Enforce BACKWARD compatibility as the default subject policy. Forward/full compat only when you understand what you're giving up.
+• JSON is fine for internal low-volume; at 1M/sec Avro/Protobuf pays for itself in 2x-3x smaller messages.
+
+PRODUCERS (language SDK):
+• Java / Kotlin — native, best performance, richest features. Default for high-throughput services.
+• librdkafka (C/C++) — used by Go (confluent-kafka-go), Python (confluent-kafka-python), .NET, Rust. Near-native performance.
+• AVOID pure-Python kafka-python or PyKafka at 1M/sec — they can't keep up. Use confluent-kafka-python if you must.
+
+STREAM PROCESSING (if you need to transform data):
+• Kafka Streams — in-process, stays close to Kafka, great for stateful transformations. Default pick if you own the Kafka cluster.
+• Apache Flink — separate cluster, better for complex windowing, joins, event-time. The heavy-hitter for real-time analytics at scale.
+• ksqlDB — SQL over Kafka, easiest to prototype, good for simple filters/joins.
+• Do NOT pick Spark Streaming for this — it's micro-batch; Flink or Kafka Streams wins on latency.
+
+DATA IN AND OUT:
+• Kafka Connect for CDC (Debezium for Postgres/MySQL/Mongo → Kafka) and sinks to S3, Snowflake, ClickHouse.
+• At 1M/sec Debezium + Postgres WAL is the standard CDC path; don't reinvent it.
+
+OBSERVABILITY:
+• Prometheus + JMX exporter on every broker; Grafana dashboards from kafka-mixin or Burrow.
+• Burrow or Cruise Control for consumer lag + cluster rebalancing.
+• OpenTelemetry traces on producers/consumers — trace the msg through the whole pipeline.
+
+STORAGE TIER:
+• Local NVMe for hot partitions (last 24-72h). At 86 TB/day raw, 260 TB/day with RF=3, you can't keep everything on local disk.
+• Tiered Storage (Kafka 3.6+ KIP-405) offloads older segments to S3/GCS. Retention becomes cheap; hot set stays local. This is the feature that changes the cost math for long retention.
+• Or: shorter local retention (3-7 days) + separate analytics pipeline that archives to S3 via Connect.
+
+NETWORK:
+• Dedicated 25/100 Gbps NICs on brokers. Separate VLAN (or separate NICs) for replication traffic vs client traffic — replication bursts during broker restart shouldn't starve producers.
+• Enable TLS only at the edge (cluster-internal plaintext over a trusted VPC) unless compliance requires otherwise — TLS costs 15-30% CPU at this scale.
+
+CLIENTS / FRONTEND:
+• API gateway → proxy service → Kafka. Clients don't talk to Kafka directly.
+• At the edge, an HTTP ingest service (Java/Go) batches requests into Kafka producer sends.
+• For browser telemetry, use something like Snowplow Collector or a thin proxy — don't expose Kafka over WebSockets.
+
+DOWNSTREAM CONSUMPTION (typical shape):
+• Real-time analytics: Kafka → Flink → ClickHouse or Druid.
+• Data lake: Kafka → S3 (Parquet, partitioned by hour) via Kafka Connect.
+• Search index: Kafka → Elasticsearch via Connect or a dedicated indexer.
+• OLTP side effects: Kafka → service consumers (idempotent) → Postgres.
+
+WHAT YOU DON'T PICK AT 1M/SEC:
+• RabbitMQ — you will run out of RAM before you hit half this throughput.
+• Redis Streams — works up to maybe 100k/sec on a cluster; not 1M.
+• SQS — throughput limits + 256 KB message cap kill this at scale.
+• NATS Core — no durability. JetStream can handle high throughput but the log ecosystem (Connect, Schema Registry, CDC) is Kafka-native.
+
+ONE-LINER TO SAY ON THE WHITEBOARD:
+"Apache Kafka in KRaft mode, 30-50 brokers with NVMe + tiered storage to S3, Avro + Schema Registry, Kafka Connect for CDC and sinks, Kafka Streams or Flink for transformations, confluent-kafka SDK for clients."`,
+    keywords: ["sizing", "partitions", "batching", "compression", "page-cache", "KRaft", "tech-stack", "flink", "connect", "schema-registry"],
   },
   {
     id: 41, level: "lead", topic: "kafka",
