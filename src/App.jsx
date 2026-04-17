@@ -54,6 +54,8 @@ export default function App() {
 
   const [expandedId, setExpandedId] = useState(null);
   const [quiz, setQuiz] = useState(null); // { ids, idx, results: {easy,medium,hard} }
+  const [ratingFilter, setRatingFilter] = useState("all"); // all|bookmarked|easy|medium|hard|unrated
+  const [collapsedLevels, setCollapsedLevels] = useState(() => new Set()); // Set of level keys that are collapsed
   const [completed, setCompleted] = useState(new Set(initial.completed));
   const [bookmarked, setBookmarked] = useState(new Set(initial.bookmarked));
   const [revealed, setRevealed] = useState(new Set(initial.revealed));
@@ -173,17 +175,24 @@ export default function App() {
   // ============== DERIVED ==============
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    const passRating = (id) => {
+      if (ratingFilter === "all") return true;
+      if (ratingFilter === "bookmarked") return bookmarked.has(id);
+      if (ratingFilter === "unrated") return !confidence[id];
+      return confidence[id] === ratingFilter;
+    };
     return QUESTIONS.filter((q) => {
       if (levelFilter !== "all" && q.level !== levelFilter) return false;
       if (topicFilter !== "all" && q.topic !== topicFilter) return false;
       if (hideCompleted && completed.has(q.id)) return false;
+      if (!passRating(q.id)) return false;
       if (needle) {
         const hay = `${q.q} ${q.a} ${(q.keywords || []).join(" ")}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     }).sort((a, b) => LEVELS[a.level].order - LEVELS[b.level].order || a.id - b.id);
-  }, [levelFilter, topicFilter, hideCompleted, completed, query]);
+  }, [levelFilter, topicFilter, hideCompleted, completed, query, ratingFilter, bookmarked, confidence]);
 
   const stats = useMemo(() => {
     const total = QUESTIONS.length;
@@ -891,6 +900,93 @@ export default function App() {
           </div>
         </div>
 
+        {/* RATING / BOOKMARK FILTER CHIPS */}
+        {!quiz && (() => {
+          const allIds = QUESTIONS.map((x) => x.id);
+          const counts = {
+            all: allIds.length,
+            bookmarked: allIds.filter((id) => bookmarked.has(id)).length,
+            hard: allIds.filter((id) => confidence[id] === "hard").length,
+            medium: allIds.filter((id) => confidence[id] === "medium").length,
+            easy: allIds.filter((id) => confidence[id] === "easy").length,
+            unrated: allIds.filter((id) => !confidence[id]).length,
+          };
+          const chipColor = {
+            all: "var(--text-muted)",
+            bookmarked: "var(--accent-amber)",
+            hard: "var(--accent-red)",
+            medium: "var(--accent-amber)",
+            easy: "var(--accent-green)",
+            unrated: "var(--text-muted)",
+          };
+          const chips = [
+            { k: "all", label: "all" },
+            { k: "bookmarked", label: "⚑ bookmarked" },
+            { k: "hard", label: "hard" },
+            { k: "medium", label: "medium" },
+            { k: "easy", label: "easy" },
+            { k: "unrated", label: "unrated" },
+          ];
+          return (
+            <div style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "6px",
+              alignItems: "center",
+              marginBottom: "16px",
+            }}>
+              <span style={{
+                fontSize: "10px",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+                color: "var(--text-muted)",
+                marginRight: "4px",
+              }}>
+                rating:
+              </span>
+              {chips.map((c) => {
+                const n = counts[c.k];
+                const active = ratingFilter === c.k;
+                const col = chipColor[c.k];
+                const disabled = c.k !== "all" && n === 0;
+                return (
+                  <button
+                    key={c.k}
+                    disabled={disabled}
+                    onClick={() => {
+                      setRatingFilter(c.k);
+                      trackEvent("rating_filter", { value: c.k });
+                    }}
+                    style={{
+                      background: active ? `color-mix(in srgb, ${col} 15%, transparent)` : "transparent",
+                      border: active
+                        ? `1px solid color-mix(in srgb, ${col} 60%, transparent)`
+                        : "1px solid var(--border-default)",
+                      color: active ? col : disabled ? "var(--text-faint)" : "var(--text-muted)",
+                      padding: "4px 10px",
+                      borderRadius: "3px",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      opacity: disabled ? 0.5 : 1,
+                      fontFamily: "inherit",
+                      fontSize: "11px",
+                      fontWeight: 500,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "6px",
+                      textTransform: "lowercase",
+                    }}
+                  >
+                    {c.label}
+                    <span style={{ fontSize: "10px", fontVariantNumeric: "tabular-nums", opacity: 0.7 }}>
+                      {n}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* QUESTIONS */}
         <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
           {filtered.length === 0 && (
@@ -911,24 +1007,50 @@ export default function App() {
             const prevLevel = idx > 0 ? filtered[idx - 1].level : null;
             const isNewLevelGroup = q.level !== prevLevel;
             const lvl = LEVELS[q.level];
+            const isCollapsed = collapsedLevels.has(q.level);
             // Count items in this level group
             const levelItems = filtered.filter((x) => x.level === q.level);
             const levelDone = levelItems.filter((x) => completed.has(x.id)).length;
+            const toggleLevelCollapse = () => {
+              setCollapsedLevels((prev) => {
+                const next = new Set(prev);
+                if (next.has(q.level)) next.delete(q.level);
+                else next.add(q.level);
+                return next;
+              });
+            };
             return (
               <div key={q.id} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {isNewLevelGroup && (
-                  <div style={{
-                    marginTop: idx === 0 ? 0 : "16px",
-                    padding: "10px 14px",
-                    background: `color-mix(in srgb, ${lvl.color} 8%, transparent)`,
-                    border: `1px solid color-mix(in srgb, ${lvl.color} 30%, transparent)`,
-                    borderLeft: `3px solid ${lvl.color}`,
-                    borderRadius: "6px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    flexWrap: "wrap",
-                  }}>
+                  <button
+                    onClick={toggleLevelCollapse}
+                    style={{
+                      marginTop: idx === 0 ? 0 : "16px",
+                      padding: "10px 14px",
+                      background: `color-mix(in srgb, ${lvl.color} 8%, transparent)`,
+                      border: `1px solid color-mix(in srgb, ${lvl.color} 30%, transparent)`,
+                      borderLeft: `3px solid ${lvl.color}`,
+                      borderRadius: "6px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      flexWrap: "wrap",
+                      cursor: "pointer",
+                      width: "100%",
+                      textAlign: "left",
+                      fontFamily: "inherit",
+                    }}
+                    aria-expanded={!isCollapsed}
+                    title={isCollapsed ? `Expand ${lvl.label}` : `Collapse ${lvl.label}`}
+                  >
+                    <span style={{
+                      display: "flex",
+                      alignItems: "center",
+                      color: lvl.color,
+                      flexShrink: 0,
+                    }}>
+                      {isCollapsed ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                    </span>
                     <span style={{
                       color: lvl.color,
                       fontFamily: "'Space Grotesk', sans-serif",
@@ -945,6 +1067,7 @@ export default function App() {
                       letterSpacing: "0.1em",
                     }}>
                       {levelItems.length} questions · {levelDone}/{levelItems.length} done
+                      {isCollapsed && " · hidden"}
                     </span>
                     <div style={{
                       flex: 1,
@@ -962,23 +1085,25 @@ export default function App() {
                         transition: "width 0.2s",
                       }} />
                     </div>
-                  </div>
+                  </button>
                 )}
-                <QuestionCard
-                  q={q}
-                  idx={idx}
-                  isDone={completed.has(q.id)}
-                  isBookmarked={bookmarked.has(q.id)}
-                  isExpanded={expandedId === q.id}
-                  isRevealed={revealed.has(q.id)}
-                  conf={confidence[q.id]}
-                  blindMode={blindMode}
-                  onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
-                  onToggleComplete={(e) => toggleComplete(q.id, e?.shiftKey)}
-                  onToggleBookmark={() => toggleBookmark(q.id)}
-                  onToggleReveal={() => toggleReveal(q.id)}
-                  onSetConf={(c) => setConf(q.id, c)}
-                />
+                {!isCollapsed && (
+                  <QuestionCard
+                    q={q}
+                    idx={idx}
+                    isDone={completed.has(q.id)}
+                    isBookmarked={bookmarked.has(q.id)}
+                    isExpanded={expandedId === q.id}
+                    isRevealed={revealed.has(q.id)}
+                    conf={confidence[q.id]}
+                    blindMode={blindMode}
+                    onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
+                    onToggleComplete={(e) => toggleComplete(q.id, e?.shiftKey)}
+                    onToggleBookmark={() => toggleBookmark(q.id)}
+                    onToggleReveal={() => toggleReveal(q.id)}
+                    onSetConf={(c) => setConf(q.id, c)}
+                  />
+                )}
               </div>
             );
           })}
