@@ -2354,4 +2354,322 @@ COMMON FOLLOW-UP:
 → See id 103 — idempotency key stored in the consumer's own DB.`,
     keywords: ["outbox", "CDC", "transactional", "publishing", "reliability"],
   },
+
+  // ============== NEW: FRIENDLY "WHAT WOULD I PICK" SCENARIOS ==============
+  {
+    id: 111, level: "middle", topic: "comparison",
+    q: "Scenario: \"User signs up → 5 services need to react\" — which broker?",
+    a: `Classic fan-out. New user signup should:
+   1. Send welcome email.
+   2. Create a record in CRM.
+   3. Track the signup in analytics.
+   4. Provision the default workspace.
+   5. Notify the sales team in Slack.
+
+NONE of these should block the signup API response. And failure in any ONE of them should not fail the others.
+
+BEST FIT: RabbitMQ topic exchange OR NATS JetStream
+
+Why: fan-out is exactly what topic-based pub-sub is for. Producer sends one message to one exchange/subject; the broker routes a copy to each consumer's queue.
+
+RabbitMQ sketch:
+   events.user (topic exchange)
+       ↓ routing key "user.signup"
+       ├── queue: email.welcome   → email worker
+       ├── queue: crm.sync        → crm worker
+       ├── queue: analytics.track → analytics worker
+       ├── queue: workspace.init  → provisioner
+       └── queue: slack.notify    → slack bot
+
+Why this wins over alternatives:
+• Per-consumer queue = per-consumer backlog. Slow CRM integration doesn't slow the email.
+• Per-queue DLQ for poison messages.
+• Adding a 6th consumer tomorrow: bind a new queue to the same routing key. Zero producer changes.
+
+Why NOT Kafka here:
+• You don't need replay — signups aren't replayed.
+• You don't need ordering — these 5 events are independent.
+• Kafka consumer groups need partition planning; overkill for 5 subscribers.
+
+Why NOT Celery:
+• Celery is a task queue, not an event bus. You'd end up calling 5 tasks from the signup handler — producer knows about all 5 consumers, which is exactly the coupling we're avoiding.
+
+PRODUCTION DETAIL: each consumer queue should have its own retry policy. Email bounces differ from CRM timeouts.`,
+    keywords: ["fan-out", "pub-sub", "signup", "scenario", "topic-exchange"],
+  },
+  {
+    id: 112, level: "senior", topic: "comparison",
+    q: "Scenario: \"100k image uploads/day → resize + thumbnail + OCR\" — how to shape it?",
+    a: `Characteristics: high volume but not sudden-spike, heavy CPU, outputs multiple artifacts per input, some steps can fail independently.
+
+BEST FIT: RabbitMQ / SQS for the work queue + S3 for payloads + pipeline of stages.
+
+DO NOT put the image bytes in the message. Put a pointer (S3 key) and metadata. Messages stay tiny; broker stays fast.
+
+SHAPE:
+   [API] → uploads to S3 → enqueues ImageUploaded{ s3_key, user_id }
+                           ↓
+                      [resize-workers]  → writes resized S3 objects → ResizedCreated
+                           ↓
+                      [thumbnail-workers] → thumb.s3_key → ThumbnailCreated
+                           ↓
+                      [ocr-workers (slow)] → OCR text → OCRDone
+
+KEY DECISIONS:
+1. STAGES AS SEPARATE QUEUES. Each stage has its own backlog, workers, and scaling policy. OCR is 10x slower than resize? Give it 10x workers; thumbnails don't suffer.
+2. PREFETCH=1 PER WORKER. These are CPU-bound — if prefetch is too high, a worker grabs 50 images it can't finish, starving others.
+3. VISIBILITY TIMEOUT / ACK DEADLINE = LONGER THAN THE SLOWEST STAGE. For OCR set to 5 minutes. If it's less, broker redelivers mid-processing and the next worker does the same expensive work twice.
+4. IDEMPOTENCY BY S3 KEY. If a worker re-processes an image (crash, redelivery), overwriting the same S3 object is fine — same bytes land at the same key.
+5. DLQ PER STAGE with original message + error reason as headers. Ops can re-enqueue after a code fix.
+6. BACKPRESSURE AT THE API. If upload queue > N pending, return 429. Don't let a bad day melt your workers.
+
+WHY NOT KAFKA:
+• Task queue semantics (competing consumers, per-message ack) are not Kafka's strength. You'd implement retries + DLQ by hand. Use a task queue.
+
+WHY NOT CELERY:
+• Celery works for this but its chord/chain primitives get messy across 3 stages when you want per-stage observability. Raw queues + explicit stage names is clearer for ops.`,
+    keywords: ["task-queue", "pipeline", "image", "stages", "prefetch", "visibility-timeout", "DLQ"],
+  },
+  {
+    id: 113, level: "senior", topic: "comparison",
+    q: "Scenario: \"We need to replay 7 days of events after a bug fix\" — which broker?",
+    a: `The question tells you the answer. \"Replay\" = log-based storage.
+
+BEST FIT: Kafka (or Redis Streams / NATS JetStream for smaller scale).
+
+WHY RABBITMQ/SQS DON'T WORK:
+• RabbitMQ queues are buffers — once a message is acked, it's GONE. You can't \"replay yesterday\".
+• SQS Standard: messages disappear after ack (max 14 days retention, and they don't stick around).
+
+KAFKA MECHANICS FOR REPLAY:
+1. Retention is time-based (default 7 days; set to 30 or forever).
+2. Consumer group tracks offset per partition. To replay:
+   kafka-consumer-groups.sh --reset-offsets --to-datetime 2026-04-10T00:00:00 --group billing-consumer
+3. Restart the consumer. It re-reads everything from that point.
+
+PRODUCTION WRINKLES:
+• Downstream must be IDEMPOTENT for replay. If your consumer credits $5 to an account on every OrderPaid event, replay credits them $5 N more times. Broken.
+• SIDE EFFECTS that can't be retracted (emails, SMS, charges): gate behind an \"already processed\" check keyed by event ID.
+• SCHEMA EVOLUTION over 7 days. If event shape changed mid-week, your consumer must read both. Use Schema Registry with backward compatibility.
+• COST. Long retention = disk. Compact topics help for \"current state\" streams but not for audit logs.
+
+RULE OF THUMB:
+• Replay needed → log-based (Kafka / Redis Streams / JetStream).
+• Task queue with retries but no replay → RabbitMQ / SQS / Celery.
+
+This is also THE question where \"we chose Kafka because we might need replay someday\" is usually wrong — if you don't need it TODAY, Kafka is overkill. Build what you need; migrate when you need more.`,
+    keywords: ["replay", "kafka", "retention", "offset", "idempotent", "scenario"],
+  },
+
+  // ============== NEW: REAL PROJECT — GOOD vs BAD IN PRODUCTION ==============
+  {
+    id: 114, level: "senior", topic: "patterns",
+    q: "Real project: payments — ✅ Good vs ❌ Bad",
+    a: `An API endpoint that charges a card and records the transaction.
+
+❌ BAD — the \"it works on my machine\" approach:
+
+  def charge(order_id, card_token, amount):
+      stripe.charge(card_token, amount)              # 🔥 network call inside request
+      db.charges.insert(order_id=order_id, ...)     # 🔥 two non-atomic writes
+      kafka.publish("payment.completed", {...})     # 🔥 another one, 3 total
+      email.send_receipt(...)                        # 🔥 makes request slow + fragile
+      return {"status": "ok"}
+
+What goes wrong in production:
+• stripe.charge succeeds; db insert fails (deadlock, FK violation, anything) → charged customer, no record.
+• db insert succeeds; kafka.publish fails → charged + recorded, but downstream systems (loyalty points, analytics) never see it.
+• email service is slow → p99 latency of payment API climbs from 200ms to 3s.
+• Everything fails? We retry from the client. Customer gets charged 3x.
+
+✅ GOOD — production-grade payment handler:
+
+  def charge(order_id, card_token, amount, idempotency_key):
+      # 1. In ONE DB transaction, write the intent + the outbox event.
+      with db.transaction():
+          if db.seen.exists(idempotency_key):
+              return db.charges.by_key(idempotency_key)  # replay protection
+          db.seen.insert(idempotency_key)
+
+          # Idempotent call to Stripe: they dedupe by idempotency_key too.
+          charge_result = stripe.charge(
+              card_token, amount, idempotency_key=idempotency_key,
+          )
+
+          db.charges.insert(
+              order_id=order_id,
+              stripe_id=charge_result.id,
+              amount=amount,
+              status="completed",
+          )
+          db.outbox.insert(
+              topic="payment.completed",
+              payload={"order_id": order_id, "stripe_id": charge_result.id},
+          )
+
+      # 2. Separate worker (not this request) publishes outbox → Kafka → downstream.
+      # 3. Email is triggered by a separate consumer of payment.completed.
+
+      return {"status": "ok", "stripe_id": charge_result.id}
+
+WHY THIS SHAPE:
+• Stripe + DB share an idempotency key. Same request retried = same charge, not a new one.
+• DB transaction + outbox = either both commit or neither. No partial state.
+• Kafka publish is out-of-band (outbox worker). The request doesn't wait on it.
+• Email sent by a downstream consumer of payment.completed — failures there don't affect the payment record.
+• Any consumer crashes and replays: idempotency key makes the side effect safe.
+
+REAL FAILURE MODES IT PREVENTS:
+• Network blip mid-request → client retries → same idempotency key → no double charge.
+• Kafka outage → request succeeds, outbox retries publishing for hours.
+• Email provider outage → charge still goes through; receipt email goes out later.
+
+This is the pattern Stripe/Uber/Shopify all use. It's ~30 extra lines once you write the outbox plumbing, and it prevents 90% of payment incidents.`,
+    keywords: ["payments", "idempotency", "outbox", "transaction", "good-vs-bad", "production", "stripe"],
+  },
+  {
+    id: 115, level: "senior", topic: "patterns",
+    q: "Real project: email notifications — ✅ Good vs ❌ Bad",
+    a: `A service that sends transactional emails (password reset, receipt, alert).
+
+❌ BAD — the version everyone writes first:
+
+  @app.route("/forgot-password")
+  def forgot():
+      user = User.find_by_email(request.json["email"])
+      if user:
+          token = generate_reset_token(user)
+          sendgrid.send(                              # 🔥 blocks the request
+              to=user.email,
+              subject="Reset your password",
+              template_id="reset-v1",
+              data={"token": token},
+          )
+      return {"status": "ok"}
+
+Problems:
+• Every forgot-password hit = a SendGrid API call in the critical path. SendGrid has a blip → your endpoint times out.
+• No retry. If SendGrid 500s once, the user never gets the email. They hit forgot-password 4 more times; we do 4 more failed calls.
+• Rate limits. SendGrid enforces per-second limits. If you fire 200 resets at once, you get throttled and some emails are silently dropped.
+• Testing: unit tests HTTP-stub SendGrid; integration tests either skip email or accidentally spam real addresses.
+
+✅ GOOD — decoupled, retryable, auditable:
+
+  # web handler
+  def forgot():
+      user = User.find_by_email(request.json["email"])
+      if user:
+          token = generate_reset_token(user)
+          enqueue("email.send", {
+              "template": "password-reset",
+              "to": user.email,
+              "data": {"token": token},
+              "idempotency_key": f"reset-{user.id}-{date.today()}",
+          })                                          # < 1ms, returns immediately
+      return {"status": "ok"}
+
+  # email worker (separate process, its own scaling policy)
+  def handle_email(msg):
+      if db.email_sent.exists(msg["idempotency_key"]):
+          return                                       # already sent today
+      try:
+          sendgrid.send(to=msg["to"], template_id=msg["template"],
+                        data=msg["data"])
+          db.email_sent.insert(msg["idempotency_key"])
+      except RateLimited:
+          raise                                        # let broker retry w/ backoff
+      except TemplateNotFound:
+          dead_letter(msg, reason="template missing")
+
+WHY THIS WINS:
+• Request latency: 1ms regardless of email provider health.
+• Retries with exponential backoff are free — the broker handles them.
+• Idempotency key (user+date) caps at one reset email per day per user — spam prevention built-in.
+• Email worker has its OWN rate limit config. You scale workers based on SendGrid quota, not request volume.
+• Template missing = DLQ, not silent drop. Ops get paged.
+• Tests: use InMemory broker + mock SendGrid. Deterministic, fast.
+
+ONE NUANCE — OUTBOX VS DIRECT ENQUEUE:
+If the email depends on DB state (\"send receipt for order X\"), use the OUTBOX pattern: insert the email message in the same transaction as the order update, let the outbox worker ship it to the broker. Otherwise you risk emailing about an order that never actually committed.`,
+    keywords: ["email", "notifications", "retry", "DLQ", "idempotency", "good-vs-bad", "production"],
+  },
+  {
+    id: 116, level: "lead", topic: "patterns",
+    q: "Real project: order fulfillment saga — ✅ Good vs ❌ Bad",
+    a: `A multi-step order flow: reserve inventory → charge card → create shipment → send confirmation. Each step can fail. You need rollback semantics WITHOUT a distributed transaction.
+
+❌ BAD — the tangled monolith:
+
+  def place_order(order):
+      try:
+          inventory.reserve(order.items)
+          payment.charge(order.total)
+          shipment.create(order)
+          email.send_confirmation(order)
+      except Exception as e:
+          # "I'll handle rollback here"
+          try: inventory.release(order.items)         # might already be consumed
+          except: pass
+          try: payment.refund(order)                   # might be partially charged
+          except: pass
+          raise
+
+Why this is a landmine:
+• The rollback block is nested try/except — if refund fails, what about inventory?
+• No durable record of WHERE the order failed. If the process crashes mid-rollback, the next retry starts fresh and may re-charge.
+• You can't observe the flow. \"Order X is stuck\" = ssh into a box and grep logs.
+• Adding a 5th step = touching every path including all rollback combinations. N² coupling.
+
+✅ GOOD — explicit saga with event-driven choreography:
+
+  # Each step is a separate service with its own queue.
+  # They communicate via events on Kafka / RabbitMQ.
+
+  OrderService.place_order:
+      order = db.orders.insert(status="pending")
+      publish("order.placed", {order_id, items, total})
+
+  InventoryService listens to order.placed:
+      try: reserve(order.items)
+      except OutOfStock: publish("inventory.rejected", {order_id, reason})
+      else: publish("inventory.reserved", {order_id, reservation_id})
+
+  PaymentService listens to inventory.reserved:
+      try: charge(order.total)
+      except CardDeclined: publish("payment.failed", {order_id})
+      else: publish("payment.completed", {order_id, charge_id})
+
+  ShipmentService listens to payment.completed:
+      shipment = create(order)
+      publish("shipment.created", {order_id, tracking_id})
+
+  # Compensations — triggered by reverse events
+  InventoryService listens to payment.failed:
+      release(reservation_id)
+
+  PaymentService listens to shipment.failed (rare but possible):
+      refund(charge_id)
+
+WHY THIS SHAPE:
+• Each service owns ONE responsibility and fails loudly in its own domain.
+• The broker is the durable state machine — messages sit in queues until ack'd.
+• Compensations are JUST MORE HANDLERS. No nested try/except gymnastics.
+• \"Order X is stuck\": look at which event was last published for order X. Flow is reconstructible from the event log.
+• Idempotent consumers (idempotency keys) mean retries/replays are safe.
+• Adding a 5th step = add a new service + subscribe to the last event. Existing services don't change.
+
+OBSERVABILITY NEEDED TO MAKE THIS WORK:
+• Correlation ID (order_id) in every log line across services.
+• Distributed tracing (OpenTelemetry) so you can see the saga as ONE trace.
+• Alert on order_id that sat in \"pending\" > 10 min.
+• DLQ monitor per service — a poison message in InventoryService blocks its whole stream.
+
+ORCHESTRATION VS CHOREOGRAPHY:
+What I sketched is choreography (each service listens and reacts). Orchestration uses a central SagaOrchestrator that CALLS each service and stores state. Pick based on:
+• Choreography — easier for teams that already own their service. Harder to see \"the whole flow\" in one place.
+• Orchestration — easier to debug and evolve. But the orchestrator is a critical dependency.
+
+Most big tech stacks use orchestration (Uber's Cadence/Temporal, Netflix's Conductor). For smaller shops, choreography starts simpler.`,
+    keywords: ["saga", "fulfillment", "choreography", "orchestration", "good-vs-bad", "production", "events"],
+  },
 ];

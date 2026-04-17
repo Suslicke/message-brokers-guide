@@ -55,6 +55,7 @@ export default function App() {
   const [expandedId, setExpandedId] = useState(null);
   const [quiz, setQuiz] = useState(null); // { ids, idx, results: {easy,medium,hard} }
   const [ratingFilter, setRatingFilter] = useState("all"); // all|bookmarked|easy|medium|hard|unrated
+  const [tagFilter, setTagFilter] = useState(null); // single keyword string
   const [collapsedLevels, setCollapsedLevels] = useState(() => new Set()); // Set of level keys that are collapsed
   const [suggestFocused, setSuggestFocused] = useState(false);
   const [suggestIdx, setSuggestIdx] = useState(-1);
@@ -188,13 +189,17 @@ export default function App() {
       if (topicFilter !== "all" && q.topic !== topicFilter) return false;
       if (hideCompleted && completed.has(q.id)) return false;
       if (!passRating(q.id)) return false;
+      if (tagFilter) {
+        const kws = (q.keywords || []).map((k) => k.toLowerCase());
+        if (!kws.includes(tagFilter.toLowerCase())) return false;
+      }
       if (needle) {
         const hay = `${q.q} ${q.a} ${(q.keywords || []).join(" ")}`.toLowerCase();
         if (!hay.includes(needle)) return false;
       }
       return true;
     }).sort((a, b) => LEVELS[a.level].order - LEVELS[b.level].order || a.id - b.id);
-  }, [levelFilter, topicFilter, hideCompleted, completed, query, ratingFilter, bookmarked, confidence]);
+  }, [levelFilter, topicFilter, hideCompleted, completed, query, ratingFilter, bookmarked, confidence, tagFilter]);
 
   const stats = useMemo(() => {
     const total = QUESTIONS.length;
@@ -1030,6 +1035,46 @@ export default function App() {
           </div>
         </div>
 
+        {/* ACTIVE TAG CHIP — dismissable */}
+        {!quiz && tagFilter && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: "8px",
+            marginBottom: "12px", flexWrap: "wrap",
+          }}>
+            <span style={{
+              fontSize: "10px", textTransform: "uppercase",
+              letterSpacing: "0.1em", color: "var(--text-muted)",
+            }}>
+              tag filter:
+            </span>
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: "6px",
+              fontSize: "11px", color: "var(--bg-app)",
+              background: "var(--accent-blue)",
+              padding: "3px 10px", borderRadius: "12px",
+              fontWeight: 500,
+            }}>
+              #{tagFilter}
+              <button
+                onClick={() => setTagFilter(null)}
+                style={{
+                  background: "none", border: "none",
+                  color: "var(--bg-app)", cursor: "pointer",
+                  display: "flex", alignItems: "center",
+                  padding: 0, opacity: 0.8,
+                }}
+                aria-label="Clear tag filter"
+                title="Clear"
+              >
+                <X size={12} />
+              </button>
+            </span>
+            <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+              {filtered.length} match{filtered.length === 1 ? "" : "es"}
+            </span>
+          </div>
+        )}
+
         {/* RATING / BOOKMARK FILTER CHIPS */}
         {!quiz && (() => {
           const allIds = QUESTIONS.map((x) => x.id);
@@ -1228,6 +1273,12 @@ export default function App() {
                     conf={confidence[q.id]}
                     blindMode={blindMode}
                     searchQuery={query}
+                    activeTag={tagFilter}
+                    onPickTag={(kw) => {
+                      setTagFilter((cur) => (cur && cur.toLowerCase() === kw.toLowerCase() ? null : kw));
+                      trackEvent("tag_picked", { tag: kw });
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
                     onToggleExpand={() => setExpandedId(expandedId === q.id ? null : q.id)}
                     onToggleComplete={(e) => toggleComplete(q.id, e?.shiftKey)}
                     onToggleBookmark={() => toggleBookmark(q.id)}
@@ -1412,7 +1463,7 @@ function highlight(text, needle) {
 function QuestionCard({
   q, idx, isDone, isBookmarked, isExpanded, isRevealed, conf, blindMode,
   onToggleExpand, onToggleComplete, onToggleBookmark, onToggleReveal, onSetConf,
-  searchQuery,
+  searchQuery, activeTag, onPickTag,
 }) {
   const lvl = LEVELS[q.level];
   const showAnswer = !blindMode || isRevealed;
@@ -1573,16 +1624,29 @@ function QuestionCard({
                   marginTop: "10px", paddingTop: "10px",
                   borderTop: "1px dashed var(--border-default)",
                 }}>
-                  {q.keywords.map((kw) => (
-                    <span key={kw} style={{
-                      fontSize: "10px",
-                      color: "var(--accent-blue)",
-                      padding: "2px 8px",
-                      background: "var(--bg-app)",
-                      border: "1px solid color-mix(in srgb, var(--accent-blue) 20%, transparent)",
-                      borderRadius: "10px",
-                    }}>#{kw}</span>
-                  ))}
+                  {q.keywords.map((kw) => {
+                    const isActive = activeTag && activeTag.toLowerCase() === kw.toLowerCase();
+                    return (
+                      <button
+                        key={kw}
+                        onClick={(e) => { e.stopPropagation(); onPickTag(kw); }}
+                        title={isActive ? `Filtering by #${kw} — click to clear` : `Filter by #${kw}`}
+                        style={{
+                          fontSize: "10px",
+                          color: isActive ? "var(--bg-app)" : "var(--accent-blue)",
+                          background: isActive ? "var(--accent-blue)" : "var(--bg-app)",
+                          border: "1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent)",
+                          borderRadius: "10px",
+                          padding: "2px 8px",
+                          cursor: "pointer",
+                          fontFamily: "inherit",
+                          fontWeight: 500,
+                        }}
+                      >
+                        #{kw}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
 
